@@ -1,708 +1,589 @@
-import React, { useEffect, useRef, useState } from 'react';
-import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 
-export default function AetherPixPremium() {
-  const containerRef = useRef(null);
-  const sceneRef = useRef(null);
-  const [scrollY, setScrollY] = useState(0);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const [activeTab, setActiveTab] = useState(0);
-  const [hoverCard, setHoverCard] = useState(null);
+// ─── Scroll-reveal hook ───────────────────────────────────────────────────────
+function useScrollReveal(options = {}) {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
 
-  // Initialize Three.js with advanced 3D scene
   useEffect(() => {
-    if (!containerRef.current) return;
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.unobserve(el); // fire once
+        }
+      },
+      { threshold: 0.15, ...options }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
-    const width = window.innerWidth;
-    const height = window.innerHeight;
+  return [ref, visible];
+}
 
-    // Scene setup with fog for depth
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0f1419);
-    scene.fog = new THREE.Fog(0x0f1419, 50, 100);
-    sceneRef.current = scene;
+// ─── Animated section wrapper ─────────────────────────────────────────────────
+function Reveal({ children, delay = 0, direction = 'up', className = '' }) {
+  const [ref, visible] = useScrollReveal();
 
-    const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
-    camera.position.z = 5;
+  const transforms = {
+    up: 'translateY(48px)',
+    down: 'translateY(-48px)',
+    left: 'translateX(-48px)',
+    right: 'translateX(48px)',
+    scale: 'scale(0.85)',
+    none: 'none',
+  };
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.shadowMap.enabled = true;
-    containerRef.current.appendChild(renderer.domElement);
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'none' : transforms[direction],
+        transition: `opacity 0.7s ease ${delay}s, transform 0.7s cubic-bezier(0.22,1,0.36,1) ${delay}s`,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
 
-    // Create advanced particle system
-    const createParticleSystem = (color, count) => {
-      const geometry = new THREE.BufferGeometry();
-      const positions = new Float32Array(count * 3);
-      const velocities = new Float32Array(count * 3);
+// ─── Animated counter ─────────────────────────────────────────────────────────
+function Counter({ target, suffix = '' }) {
+  const [ref, visible] = useScrollReveal();
+  const [count, setCount] = useState(0);
 
-      for (let i = 0; i < count * 3; i += 3) {
-        positions[i] = (Math.random() - 0.5) * 30;
-        positions[i + 1] = (Math.random() - 0.5) * 30;
-        positions[i + 2] = (Math.random() - 0.5) * 30;
+  useEffect(() => {
+    if (!visible) return;
+    const num = parseFloat(target.replace(/[^0-9.]/g, ''));
+    if (isNaN(num)) return;
+    let start = 0;
+    const duration = 1800;
+    const step = 16;
+    const increment = num / (duration / step);
+    const timer = setInterval(() => {
+      start += increment;
+      if (start >= num) { setCount(num); clearInterval(timer); }
+      else setCount(Math.floor(start * 10) / 10);
+    }, step);
+    return () => clearInterval(timer);
+  }, [visible, target]);
 
-        velocities[i] = (Math.random() - 0.5) * 0.02;
-        velocities[i + 1] = (Math.random() - 0.5) * 0.02;
-        velocities[i + 2] = (Math.random() - 0.5) * 0.02;
+  const raw = parseFloat(target.replace(/[^0-9.]/g, ''));
+  const prefix = target.match(/^[^0-9]*/)?.[0] || '';
+  const suf = target.match(/[^0-9.]+$/)?.[0] || suffix;
+
+  return (
+    <span ref={ref}>
+      {visible ? `${prefix}${Number.isInteger(raw) ? Math.floor(count) : count}${suf}` : `${prefix}0${suf}`}
+    </span>
+  );
+}
+
+// ─── Particle canvas ──────────────────────────────────────────────────────────
+function ParticleCanvas() {
+  const canvasRef = useRef(null);
+  const animRef = useRef(null);
+  const mouseRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    let W = window.innerWidth, H = window.innerHeight;
+
+    const resize = () => {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener('resize', resize);
+
+    const onMouse = (e) => { mouseRef.current = { x: e.clientX, y: e.clientY }; };
+    window.addEventListener('mousemove', onMouse);
+
+    const COUNT = 120;
+    const particles = Array.from({ length: COUNT }, () => ({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: Math.random() * 1.5 + 0.3,
+      vx: (Math.random() - 0.5) * 0.3,
+      vy: (Math.random() - 0.5) * 0.3,
+      alpha: Math.random() * 0.5 + 0.2,
+      hue: Math.random() > 0.5 ? 185 : 270, // cyan or purple
+    }));
+
+    const draw = () => {
+      ctx.clearRect(0, 0, W, H);
+      const mx = mouseRef.current.x;
+      const my = mouseRef.current.y;
+
+      particles.forEach((p) => {
+        // subtle mouse repulsion
+        const dx = p.x - mx, dy = p.y - my;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 100) {
+          p.x += (dx / dist) * 0.6;
+          p.y += (dy / dist) * 0.6;
+        }
+
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.x < 0) p.x = W;
+        if (p.x > W) p.x = 0;
+        if (p.y < 0) p.y = H;
+        if (p.y > H) p.y = 0;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${p.hue},100%,70%,${p.alpha})`;
+        ctx.fill();
+      });
+
+      // draw connecting lines
+      for (let i = 0; i < COUNT; i++) {
+        for (let j = i + 1; j < COUNT; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < 90) {
+            ctx.beginPath();
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.strokeStyle = `rgba(0,212,255,${(1 - d / 90) * 0.12})`;
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+          }
+        }
       }
 
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geometry.userData.velocities = velocities;
-
-      const material = new THREE.PointsMaterial({
-        size: 0.06,
-        color: color,
-        sizeAttenuation: true,
-        transparent: true,
-        opacity: 0.7,
-      });
-
-      return new THREE.Points(geometry, material);
+      animRef.current = requestAnimationFrame(draw);
     };
-
-    const particles1 = createParticleSystem(0x00d4ff, 80);
-    const particles2 = createParticleSystem(0xff00ff, 60);
-    const particles3 = createParticleSystem(0x00ff88, 40);
-
-    scene.add(particles1, particles2, particles3);
-
-    // Create main geometric shapes
-    const createCube = () => {
-      const geometry = new THREE.IcosahedronGeometry(1.2, 4);
-      const material = new THREE.MeshPhongMaterial({
-        color: 0x00d4ff,
-        emissive: 0x0066ff,
-        shininess: 100,
-        wireframe: false,
-      });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.castShadow = true;
-      return mesh;
-    };
-
-    const cube = createCube();
-    cube.position.set(-5, 0, 0);
-    scene.add(cube);
-
-    // Create torus knot
-    const torusKnotGeometry = new THREE.TorusKnotGeometry(1, 0.4, 100, 16);
-    const torusKnotMaterial = new THREE.MeshPhongMaterial({
-      color: 0xff00ff,
-      emissive: 0xff0088,
-      shininess: 100,
-    });
-    const torusKnot = new THREE.Mesh(torusKnotGeometry, torusKnotMaterial);
-    torusKnot.position.set(5, 0, 0);
-    torusKnot.castShadow = true;
-    scene.add(torusKnot);
-
-    // Create octahedron
-    const octahedronGeometry = new THREE.OctahedronGeometry(1);
-    const octahedronMaterial = new THREE.MeshPhongMaterial({
-      color: 0x00ff88,
-      emissive: 0x00ff44,
-      shininess: 80,
-    });
-    const octahedron = new THREE.Mesh(octahedronGeometry, octahedronMaterial);
-    octahedron.position.set(0, 4, -5);
-    octahedron.castShadow = true;
-    scene.add(octahedron);
-
-    // Advanced lighting
-    const pointLight1 = new THREE.PointLight(0x00d4ff, 1.5, 100);
-    pointLight1.position.set(8, 8, 8);
-    pointLight1.castShadow = true;
-    scene.add(pointLight1);
-
-    const pointLight2 = new THREE.PointLight(0xff00ff, 1.2, 100);
-    pointLight2.position.set(-8, -8, 8);
-    pointLight2.castShadow = true;
-    scene.add(pointLight2);
-
-    const pointLight3 = new THREE.PointLight(0x00ff88, 0.8, 100);
-    pointLight3.position.set(0, 0, 10);
-    scene.add(pointLight3);
-
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.25);
-    scene.add(ambientLight);
-
-    // Event handlers
-    const handleScroll = () => {
-      setScrollY(window.scrollY);
-    };
-
-    const handleMouseMove = (e) => {
-      setMousePos({
-        x: (e.clientX / width) * 2 - 1,
-        y: -(e.clientY / height) * 2 + 1,
-      });
-    };
-
-    const handleResize = () => {
-      const newWidth = window.innerWidth;
-      const newHeight = window.innerHeight;
-      camera.aspect = newWidth / newHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(newWidth, newHeight);
-    };
-
-    window.addEventListener('scroll', handleScroll);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('resize', handleResize);
-
-    // Animation loop
-    let frameCount = 0;
-    const animate = () => {
-      requestAnimationFrame(animate);
-      frameCount++;
-
-      // Update particles
-      [particles1, particles2, particles3].forEach((particles) => {
-        const positions = particles.geometry.attributes.position.array;
-        const velocities = particles.geometry.userData.velocities;
-
-        for (let i = 0; i < positions.length; i += 3) {
-          positions[i] += velocities[i];
-          positions[i + 1] += velocities[i + 1];
-          positions[i + 2] += velocities[i + 2];
-
-          // Bounce particles
-          if (Math.abs(positions[i]) > 15) velocities[i] *= -1;
-          if (Math.abs(positions[i + 1]) > 15) velocities[i + 1] *= -1;
-          if (Math.abs(positions[i + 2]) > 15) velocities[i + 2] *= -1;
-        }
-        particles.geometry.attributes.position.needsUpdate = true;
-        particles.rotation.x += 0.0002;
-        particles.rotation.y += 0.0003;
-      });
-
-      // Rotate main shapes with scroll influence
-      const scrollInfluence = scrollY * 0.001;
-
-      cube.rotation.x += 0.004 + scrollInfluence;
-      cube.rotation.y += 0.006 + scrollInfluence;
-      cube.position.x = -5 + mousePos.x * 1.5;
-      cube.position.y = mousePos.y * 1.5;
-
-      torusKnot.rotation.x += 0.003 + scrollInfluence;
-      torusKnot.rotation.z += 0.005 + scrollInfluence;
-      torusKnot.position.x = 5 - mousePos.x * 1.5;
-      torusKnot.position.y = -mousePos.y * 1.5;
-
-      octahedron.rotation.x += 0.002;
-      octahedron.rotation.y += 0.004;
-      octahedron.scale.set(
-        1 + Math.sin(frameCount * 0.01) * 0.1,
-        1 + Math.sin(frameCount * 0.01) * 0.1,
-        1 + Math.sin(frameCount * 0.01) * 0.1
-      );
-
-      renderer.render(scene, camera);
-    };
-
-    animate();
+    draw();
 
     return () => {
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('resize', handleResize);
-      renderer.dispose();
-      if (containerRef.current?.contains(renderer.domElement)) {
-        containerRef.current.removeChild(renderer.domElement);
-      }
+      cancelAnimationFrame(animRef.current);
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('mousemove', onMouse);
     };
   }, []);
 
   return (
-    <div className="bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 min-h-screen text-white overflow-x-hidden">
-      {/* 3D Canvas */}
-      <div ref={containerRef} className="fixed top-0 left-0 w-full h-screen z-0" />
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: 'fixed', top: 0, left: 0,
+        width: '100%', height: '100%',
+        zIndex: 0, pointerEvents: 'none',
+      }}
+    />
+  );
+}
 
-      {/* Content */}
-      <div className="relative z-10">
-        {/* Hero Section */}
-        <section className="min-h-screen flex flex-col items-center justify-center px-4 sm:px-6 lg:px-8 pt-20 relative overflow-hidden">
-          {/* Animated background elements */}
-          <div className="absolute inset-0 overflow-hidden">
-            <div className="absolute top-20 left-10 w-96 h-96 bg-cyan-500/10 rounded-full filter blur-3xl animate-pulse" />
-            <div className="absolute bottom-20 right-10 w-96 h-96 bg-purple-500/10 rounded-full filter blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+// ─── Navbar ───────────────────────────────────────────────────────────────────
+function Navbar() {
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const handler = () => setScrolled(window.scrollY > 40);
+    window.addEventListener('scroll', handler);
+    return () => window.removeEventListener('scroll', handler);
+  }, []);
+
+  return (
+    <nav
+      style={{
+        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
+        padding: '16px 40px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        backdropFilter: scrolled ? 'blur(18px)' : 'none',
+        background: scrolled ? 'rgba(10,14,39,0.85)' : 'transparent',
+        borderBottom: scrolled ? '1px solid rgba(0,212,255,0.12)' : '1px solid transparent',
+        transition: 'all 0.4s ease',
+      }}
+    >
+      <span style={{ fontSize: 22, fontWeight: 800, background: 'linear-gradient(90deg,#00d4ff,#a855f7)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+        AetherPix
+      </span>
+      <div style={{ display: 'flex', gap: 32 }}>
+        {['Features', 'Gallery', 'Pricing', 'API'].map((link) => (
+          <a key={link} href="#" style={{ color: 'rgba(200,220,255,0.7)', textDecoration: 'none', fontSize: 14, fontWeight: 500, transition: 'color 0.2s' }}
+            onMouseEnter={e => (e.target.style.color = '#00d4ff')}
+            onMouseLeave={e => (e.target.style.color = 'rgba(200,220,255,0.7)')}
+          >{link}</a>
+        ))}
+      </div>
+      <button style={{
+        padding: '8px 20px', background: 'linear-gradient(135deg,#00d4ff,#3b82f6)',
+        border: 'none', borderRadius: 50, color: '#fff', fontWeight: 600,
+        fontSize: 14, cursor: 'pointer', transition: 'box-shadow 0.3s',
+      }}>Sign up free</button>
+    </nav>
+  );
+}
+
+// ─── Hero ─────────────────────────────────────────────────────────────────────
+function Hero() {
+  const [query, setQuery] = useState('');
+  const [typed, setTyped] = useState('');
+  const placeholders = ['sunsets over mountains', 'neon city rain', 'abstract geometry', 'deep ocean life'];
+  const phIdx = useRef(0);
+  const charIdx = useRef(0);
+  const forward = useRef(true);
+
+  useEffect(() => {
+    const tick = setInterval(() => {
+      const ph = placeholders[phIdx.current];
+      if (forward.current) {
+        charIdx.current++;
+        if (charIdx.current >= ph.length) { forward.current = false; setTimeout(() => {}, 800); }
+      } else {
+        charIdx.current--;
+        if (charIdx.current <= 0) {
+          forward.current = true;
+          phIdx.current = (phIdx.current + 1) % placeholders.length;
+        }
+      }
+      setTyped(ph.slice(0, charIdx.current));
+    }, forward.current ? 60 : 40);
+    return () => clearInterval(tick);
+  }, []);
+
+  return (
+    <section style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '120px 24px 80px' }}>
+      {/* Badge */}
+      <Reveal delay={0} direction="down">
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 16px', borderRadius: 50, border: '1px solid rgba(0,212,255,0.3)', background: 'rgba(0,212,255,0.06)', marginBottom: 28 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#00d4ff', display: 'inline-block', boxShadow: '0 0 8px #00d4ff' }} />
+          <span style={{ color: '#00d4ff', fontSize: 13, fontWeight: 600, letterSpacing: 1 }}>AI-POWERED IMAGE SEARCH</span>
+        </div>
+      </Reveal>
+
+      {/* Headline */}
+      <Reveal delay={0.1} direction="up">
+        <h1 style={{ fontSize: 'clamp(52px,9vw,100px)', fontWeight: 900, lineHeight: 1.05, margin: '0 0 20px', letterSpacing: -2 }}>
+          <span style={{ background: 'linear-gradient(135deg,#00d4ff 0%,#3b82f6 50%,#a855f7 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+            AetherPix
+          </span>
+        </h1>
+        <p style={{ fontSize: 'clamp(18px,2.5vw,26px)', color: 'rgba(180,210,255,0.85)', maxWidth: 600, margin: '0 auto 12px', fontWeight: 300 }}>
+          Search the infinite universe of images
+        </p>
+        <p style={{ fontSize: 15, color: 'rgba(150,170,200,0.6)', maxWidth: 520, margin: '0 auto 48px', lineHeight: 1.7 }}>
+          AI-driven recognition · lightning-fast filters · billions of images indexed
+        </p>
+      </Reveal>
+
+      {/* Search */}
+      <Reveal delay={0.22} direction="up">
+        <div style={{ width: '100%', maxWidth: 620, marginBottom: 40, position: 'relative' }}>
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', background: 'rgba(15,23,60,0.7)', backdropFilter: 'blur(16px)', border: '1.5px solid rgba(0,212,255,0.25)', borderRadius: 50, overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,212,255,0.08)', transition: 'border-color 0.3s, box-shadow 0.3s' }}
+            onFocus={e => (e.currentTarget.style.borderColor = 'rgba(0,212,255,0.6)')}
+            onBlur={e => (e.currentTarget.style.borderColor = 'rgba(0,212,255,0.25)')}
+          >
+            <span style={{ paddingLeft: 24, color: 'rgba(0,212,255,0.5)', fontSize: 18 }}>🔍</span>
+            <input
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={typed + '|'}
+              style={{ flex: 1, padding: '18px 16px', background: 'transparent', border: 'none', outline: 'none', color: '#e0f0ff', fontSize: 16 }}
+            />
+            <button style={{ margin: 6, padding: '12px 28px', background: 'linear-gradient(135deg,#00d4ff,#3b82f6)', border: 'none', borderRadius: 50, color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              Search
+            </button>
           </div>
+        </div>
+      </Reveal>
 
-          <div className="text-center max-w-5xl mx-auto relative z-10">
-            {/* Badge */}
-            <div className="mb-8 inline-block">
-              <span className="px-4 py-2 bg-cyan-500/20 border border-cyan-400/50 rounded-full text-cyan-300 text-sm font-semibold backdrop-blur-md hover:bg-cyan-500/30 transition-all duration-300">
-                ✨ Welcome to the Future of Image Search
-              </span>
+      {/* CTA row */}
+      <Reveal delay={0.32} direction="up">
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
+          <button style={{ padding: '14px 36px', background: 'linear-gradient(135deg,#00d4ff,#3b82f6)', border: 'none', borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', boxShadow: '0 0 30px rgba(0,212,255,0.25)', transition: 'transform 0.2s,box-shadow 0.2s' }}
+            onMouseEnter={e => { e.target.style.transform = 'scale(1.05)'; e.target.style.boxShadow = '0 0 40px rgba(0,212,255,0.5)'; }}
+            onMouseLeave={e => { e.target.style.transform = 'scale(1)'; e.target.style.boxShadow = '0 0 30px rgba(0,212,255,0.25)'; }}
+          >Start Exploring</button>
+          <button style={{ padding: '14px 36px', background: 'transparent', border: '1.5px solid rgba(0,212,255,0.4)', borderRadius: 10, color: '#00d4ff', fontWeight: 600, fontSize: 15, cursor: 'pointer', transition: 'background 0.2s' }}
+            onMouseEnter={e => (e.target.style.background = 'rgba(0,212,255,0.08)')}
+            onMouseLeave={e => (e.target.style.background = 'transparent')}
+          >Learn More</button>
+        </div>
+      </Reveal>
+
+      {/* Scroll indicator */}
+      <Reveal delay={0.55} direction="none">
+        <div style={{ marginTop: 80, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, opacity: 0.5 }}>
+          <span style={{ fontSize: 12, letterSpacing: 2, color: '#00d4ff' }}>SCROLL</span>
+          <div style={{ width: 1, height: 48, background: 'linear-gradient(to bottom,#00d4ff,transparent)', animation: 'pulse 2s infinite' }} />
+        </div>
+      </Reveal>
+    </section>
+  );
+}
+
+// ─── Features ─────────────────────────────────────────────────────────────────
+const FEATURES = [
+  { icon: '🎨', title: 'AI-Powered Recognition', desc: 'Advanced ML identifies objects, scenes, and styles in milliseconds.' },
+  { icon: '⚡', title: 'Lightning Fast', desc: 'Search billions of images with real-time filters and instant results.' },
+  { icon: '🎯', title: 'Smart Filters', desc: 'Filter by color, style, resolution, and custom AI-trained categories.' },
+  { icon: '🔐', title: 'Privacy First', desc: 'Your searches are encrypted and never stored or sold.' },
+  { icon: '🌐', title: 'Global Collection', desc: 'Millions of royalty-free, licensed, and original images worldwide.' },
+  { icon: '✨', title: 'Curated Collections', desc: 'Hand-picked galleries from top photographers and designers.' },
+];
+
+function Features() {
+  return (
+    <section style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 24px' }}>
+      <Reveal direction="up">
+        <div style={{ textAlign: 'center', marginBottom: 64 }}>
+          <p style={{ color: '#00d4ff', fontSize: 12, fontWeight: 700, letterSpacing: 3, marginBottom: 12 }}>CAPABILITIES</p>
+          <h2 style={{ fontSize: 'clamp(32px,5vw,52px)', fontWeight: 800, background: 'linear-gradient(90deg,#00d4ff,#3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: 0 }}>
+            Powerful Features
+          </h2>
+        </div>
+      </Reveal>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 24, maxWidth: 1100, width: '100%' }}>
+        {FEATURES.map((f, i) => (
+          <Reveal key={i} delay={i * 0.08} direction={i % 2 === 0 ? 'left' : 'right'}>
+            <div
+              style={{
+                padding: 32, borderRadius: 20,
+                background: 'rgba(15,23,60,0.5)', backdropFilter: 'blur(12px)',
+                border: '1px solid rgba(0,212,255,0.15)',
+                cursor: 'pointer', transition: 'transform 0.3s,border-color 0.3s,box-shadow 0.3s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-6px)'; e.currentTarget.style.borderColor = 'rgba(0,212,255,0.5)'; e.currentTarget.style.boxShadow = '0 20px 60px rgba(0,212,255,0.12)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.borderColor = 'rgba(0,212,255,0.15)'; e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              <div style={{ fontSize: 40, marginBottom: 16 }}>{f.icon}</div>
+              <h3 style={{ color: '#00d4ff', fontWeight: 700, fontSize: 18, marginBottom: 10 }}>{f.title}</h3>
+              <p style={{ color: 'rgba(160,185,220,0.7)', lineHeight: 1.7, fontSize: 14 }}>{f.desc}</p>
             </div>
+          </Reveal>
+        ))}
+      </div>
+    </section>
+  );
+}
 
-            {/* Main Title */}
-            <h1 className="text-7xl sm:text-8xl lg:text-9xl font-black mb-6 leading-tight">
-              <span className="block text-white mb-2">Discover</span>
-              <span className="block bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 bg-clip-text text-transparent animate-pulse">
-                Your Vision
-              </span>
-            </h1>
+// ─── Gallery ──────────────────────────────────────────────────────────────────
+const EMOJIS = ['🌅', '🌊', '🏔️', '🌲', '🌺', '🦋', '🌙', '✨', '🎆', '🔮', '💫', '🌈'];
+const LABELS = ['Sunsets', 'Ocean', 'Mountains', 'Forests', 'Florals', 'Wildlife', 'Night', 'Abstract', 'Cityscapes', 'Mystic', 'Cosmos', 'Color'];
 
-            {/* Subtitle */}
-            <p className="text-xl sm:text-2xl text-gray-300 mb-4 font-light max-w-2xl mx-auto leading-relaxed">
-              An AI-powered image search engine that understands what you're looking for
-            </p>
-            <p className="text-sm sm:text-base text-gray-500 mb-12 max-w-2xl mx-auto">
-              Search across billions of images using natural language, colors, styles, and visual similarity
-            </p>
+function Gallery() {
+  return (
+    <section style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 24px' }}>
+      <Reveal direction="up">
+        <div style={{ textAlign: 'center', marginBottom: 64 }}>
+          <p style={{ color: '#a855f7', fontSize: 12, fontWeight: 700, letterSpacing: 3, marginBottom: 12 }}>EXPLORE</p>
+          <h2 style={{ fontSize: 'clamp(32px,5vw,52px)', fontWeight: 800, background: 'linear-gradient(90deg,#a855f7,#ec4899)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: 0 }}>
+            Gallery Preview
+          </h2>
+        </div>
+      </Reveal>
 
-            {/* Search Bar with Glassmorphism */}
-            <div className="mb-12 group">
-              <div className="relative max-w-2xl mx-auto">
-                <div className="absolute -inset-1 bg-gradient-to-r from-cyan-600 to-purple-600 rounded-full opacity-0 group-hover:opacity-75 blur transition duration-300" />
-                <div className="relative bg-slate-800/50 backdrop-blur-xl border border-white/10 rounded-full px-8 py-4 flex items-center gap-4 hover:border-white/20 transition-all duration-300">
-                  <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                  <input
-                    type="text"
-                    placeholder="Search by keywords, colors, objects, style..."
-                    className="flex-1 bg-transparent text-white placeholder-gray-500 focus:outline-none text-lg"
-                  />
-                  <button className="px-6 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-full text-white font-semibold hover:shadow-lg hover:shadow-cyan-500/50 transition-all duration-300 text-sm sm:text-base">
-                    Search
-                  </button>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 16, maxWidth: 1100, width: '100%' }}>
+        {EMOJIS.map((emoji, i) => (
+          <Reveal key={i} delay={i * 0.05} direction="scale">
+            <div
+              style={{
+                aspectRatio: '1', borderRadius: 16,
+                background: `linear-gradient(135deg, rgba(${i % 2 ? '168,85,247' : '0,212,255'},0.12), rgba(236,72,153,0.1))`,
+                backdropFilter: 'blur(8px)',
+                border: '1px solid rgba(168,85,247,0.2)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
+                cursor: 'pointer', transition: 'transform 0.3s, border-color 0.3s, box-shadow 0.3s',
+                overflow: 'hidden',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.06)'; e.currentTarget.style.borderColor = 'rgba(168,85,247,0.6)'; e.currentTarget.style.boxShadow = '0 16px 48px rgba(168,85,247,0.2)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.borderColor = 'rgba(168,85,247,0.2)'; e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              <span style={{ fontSize: 44, display: 'block', transition: 'transform 0.3s' }}>{emoji}</span>
+              <span style={{ color: 'rgba(200,180,255,0.6)', fontSize: 12, fontWeight: 500 }}>{LABELS[i]}</span>
+            </div>
+          </Reveal>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
+const STATS = [
+  { raw: '10B+', label: 'Images Indexed' },
+  { raw: '180+', label: 'Countries' },
+  { raw: '<100ms', label: 'Search Speed' },
+  { raw: '99.9%', label: 'Uptime' },
+];
+
+function Stats() {
+  return (
+    <section style={{ minHeight: '50vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 24px' }}>
+      <Reveal direction="up">
+        <div style={{ textAlign: 'center', marginBottom: 64 }}>
+          <p style={{ color: '#00d4ff', fontSize: 12, fontWeight: 700, letterSpacing: 3, marginBottom: 12 }}>SCALE</p>
+          <h2 style={{ fontSize: 'clamp(32px,5vw,52px)', fontWeight: 800, background: 'linear-gradient(90deg,#00d4ff,#3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: 0 }}>
+            By The Numbers
+          </h2>
+        </div>
+      </Reveal>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 24, maxWidth: 900, width: '100%' }}>
+        {STATS.map((s, i) => (
+          <Reveal key={i} delay={i * 0.1} direction="scale">
+            <div style={{ textAlign: 'center', padding: '40px 24px', borderRadius: 20, background: 'rgba(15,23,60,0.5)', backdropFilter: 'blur(12px)', border: '1px solid rgba(0,212,255,0.18)' }}>
+              <div style={{ fontSize: 'clamp(38px,6vw,56px)', fontWeight: 900, background: 'linear-gradient(135deg,#00d4ff,#3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: 8 }}>
+                <Counter target={s.raw} />
+              </div>
+              <p style={{ color: 'rgba(160,185,220,0.7)', fontSize: 15, fontWeight: 500 }}>{s.label}</p>
+            </div>
+          </Reveal>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ─── Testimonials ─────────────────────────────────────────────────────────────
+const TESTIMONIALS = [
+  { text: 'AetherPix completely changed how I source images for my clients. The AI filters are insanely precise.', name: 'Mia Tanaka', role: 'Creative Director' },
+  { text: 'The speed is unreal. I went from spending hours to finding the perfect shot in seconds.', name: 'Arjun Mehta', role: 'Photojournalist' },
+  { text: 'Finally a search engine that understands visual context, not just keywords.', name: 'Sofia Reyes', role: 'UX Designer' },
+];
+
+function Testimonials() {
+  return (
+    <section style={{ minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 24px' }}>
+      <Reveal direction="up">
+        <div style={{ textAlign: 'center', marginBottom: 64 }}>
+          <p style={{ color: '#a855f7', fontSize: 12, fontWeight: 700, letterSpacing: 3, marginBottom: 12 }}>LOVE LETTERS</p>
+          <h2 style={{ fontSize: 'clamp(32px,5vw,52px)', fontWeight: 800, background: 'linear-gradient(90deg,#a855f7,#ec4899)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: 0 }}>
+            What Creators Say
+          </h2>
+        </div>
+      </Reveal>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 24, maxWidth: 1000, width: '100%' }}>
+        {TESTIMONIALS.map((t, i) => (
+          <Reveal key={i} delay={i * 0.12} direction={i % 2 === 0 ? 'left' : 'right'}>
+            <div style={{ padding: 32, borderRadius: 20, background: 'rgba(15,10,40,0.6)', backdropFilter: 'blur(12px)', border: '1px solid rgba(168,85,247,0.2)' }}>
+              <p style={{ color: 'rgba(200,180,255,0.85)', lineHeight: 1.8, fontSize: 15, marginBottom: 24 }}>"{t.text}"</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'linear-gradient(135deg,#a855f7,#ec4899)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: '#fff', fontSize: 16 }}>
+                  {t.name[0]}
+                </div>
+                <div>
+                  <p style={{ color: '#e0d0ff', fontWeight: 700, fontSize: 14, margin: 0 }}>{t.name}</p>
+                  <p style={{ color: 'rgba(160,140,200,0.6)', fontSize: 12, margin: '2px 0 0' }}>{t.role}</p>
                 </div>
               </div>
             </div>
+          </Reveal>
+        ))}
+      </div>
+    </section>
+  );
+}
 
-            {/* CTA Buttons */}
-            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-16">
-              <button className="group px-8 py-4 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-lg font-bold text-lg hover:shadow-2xl hover:shadow-cyan-500/50 transition-all duration-300 transform hover:scale-105 relative overflow-hidden">
-                <span className="relative z-10">Explore Gallery</span>
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-cyan-500 transform scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-300" />
-              </button>
-              <button className="px-8 py-4 border-2 border-cyan-400/50 rounded-lg font-bold text-lg text-cyan-300 hover:bg-cyan-500/10 hover:border-cyan-400 transition-all duration-300 transform hover:scale-105">
-                Watch Demo
-              </button>
-            </div>
-
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-8 max-w-2xl mx-auto pt-8 border-t border-white/10">
-              {[
-                { number: '10B+', label: 'Images' },
-                { number: '180+', label: 'Countries' },
-                { number: '99.9%', label: 'Uptime' },
-              ].map((stat, i) => (
-                <div key={i} className="text-center">
-                  <div className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
-                    {stat.number}
-                  </div>
-                  <div className="text-sm text-gray-500">{stat.label}</div>
-                </div>
-              ))}
-            </div>
+// ─── CTA ──────────────────────────────────────────────────────────────────────
+function CTA() {
+  return (
+    <section style={{ minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 24px', textAlign: 'center' }}>
+      <Reveal direction="scale">
+        <div style={{ maxWidth: 700 }}>
+          <h2 style={{ fontSize: 'clamp(36px,6vw,72px)', fontWeight: 900, lineHeight: 1.1, marginBottom: 20, background: 'linear-gradient(135deg,#00d4ff,#3b82f6,#a855f7)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+            Ready to Explore?
+          </h2>
+          <p style={{ color: 'rgba(160,185,220,0.7)', fontSize: 18, lineHeight: 1.7, marginBottom: 48 }}>
+            Join millions of creators discovering the perfect image with AetherPix — no credit card, instant access.
+          </p>
+          <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button style={{ padding: '16px 44px', background: 'linear-gradient(135deg,#00d4ff,#3b82f6)', border: 'none', borderRadius: 12, color: '#fff', fontWeight: 800, fontSize: 16, cursor: 'pointer', boxShadow: '0 0 48px rgba(0,212,255,0.35)', transition: 'transform 0.2s,box-shadow 0.2s' }}
+              onMouseEnter={e => { e.target.style.transform = 'scale(1.05)'; e.target.style.boxShadow = '0 0 64px rgba(0,212,255,0.55)'; }}
+              onMouseLeave={e => { e.target.style.transform = 'none'; e.target.style.boxShadow = '0 0 48px rgba(0,212,255,0.35)'; }}
+            >Get Started Free</button>
+            <button style={{ padding: '16px 44px', background: 'transparent', border: '2px solid rgba(0,212,255,0.4)', borderRadius: 12, color: '#00d4ff', fontWeight: 700, fontSize: 16, cursor: 'pointer', transition: 'background 0.2s,border-color 0.2s' }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,212,255,0.08)'; e.currentTarget.style.borderColor = 'rgba(0,212,255,0.7)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(0,212,255,0.4)'; }}
+            >View Pricing</button>
           </div>
-        </section>
+        </div>
+      </Reveal>
+    </section>
+  );
+}
 
-        {/* Features Section with Cards */}
-        <section className="min-h-screen py-24 px-4 sm:px-6 lg:px-8 relative">
-          <div className="max-w-7xl mx-auto">
-            {/* Section Header */}
-            <div className="text-center mb-20">
-              <h2 className="text-5xl sm:text-6xl lg:text-7xl font-black mb-6">
-                <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
-                  Powerful Features
-                </span>
-              </h2>
-              <p className="text-xl text-gray-400 max-w-2xl mx-auto">
-                Everything you need to find the perfect image
-              </p>
-            </div>
+// ─── Footer ───────────────────────────────────────────────────────────────────
+const FOOTER_COLS = [
+  { title: 'Product', links: ['Features', 'Pricing', 'Security'] },
+  { title: 'Company', links: ['About', 'Blog', 'Careers'] },
+  { title: 'Resources', links: ['Documentation', 'API', 'Community'] },
+  { title: 'Legal', links: ['Privacy', 'Terms', 'Contact'] },
+];
 
-            {/* Feature Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {[
-                {
-                  icon: '🎨',
-                  title: 'AI Vision',
-                  description: 'Advanced neural networks that understand visual content, objects, and scenes',
-                  color: 'from-cyan-500 to-blue-500',
-                },
-                {
-                  icon: '⚡',
-                  title: 'Lightning Fast',
-                  description: 'Get results in milliseconds with distributed processing across 50+ servers',
-                  color: 'from-blue-500 to-purple-500',
-                },
-                {
-                  icon: '🎯',
-                  title: 'Smart Filters',
-                  description: 'Filter by color, dimensions, licenses, and AI-trained visual categories',
-                  color: 'from-purple-500 to-pink-500',
-                },
-                {
-                  icon: '🔐',
-                  title: 'Privacy First',
-                  description: 'End-to-end encrypted searches with zero tracking or data retention',
-                  color: 'from-pink-500 to-red-500',
-                },
-                {
-                  icon: '🌐',
-                  title: 'Global Scale',
-                  description: 'Access millions of royalty-free images from creators worldwide',
-                  color: 'from-red-500 to-orange-500',
-                },
-                {
-                  icon: '✨',
-                  title: 'Collections',
-                  description: 'Curated collections from top photographers and design communities',
-                  color: 'from-orange-500 to-yellow-500',
-                },
-              ].map((feature, index) => (
-                <div
-                  key={index}
-                  className="group relative"
-                  onMouseEnter={() => setHoverCard(index)}
-                  onMouseLeave={() => setHoverCard(null)}
-                >
-                  {/* Glow background */}
-                  <div className={`absolute -inset-0.5 bg-gradient-to-r ${feature.color} rounded-2xl opacity-0 group-hover:opacity-100 blur transition duration-300`} />
-
-                  {/* Card */}
-                  <div className="relative bg-slate-800/50 backdrop-blur-xl rounded-2xl p-8 border border-white/10 group-hover:border-white/30 transition-all duration-300 transform group-hover:scale-105">
-                    {/* Icon */}
-                    <div className={`text-5xl mb-6 group-hover:scale-125 transition-transform duration-300 ${hoverCard === index ? 'animate-bounce' : ''}`}>
-                      {feature.icon}
-                    </div>
-
-                    {/* Title */}
-                    <h3 className="text-2xl font-bold mb-4 text-white group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-cyan-400 group-hover:to-blue-500 transition-all duration-300">
-                      {feature.title}
-                    </h3>
-
-                    {/* Description */}
-                    <p className="text-gray-400 group-hover:text-gray-300 transition-colors duration-300 leading-relaxed">
-                      {feature.description}
-                    </p>
-
-                    {/* Arrow */}
-                    <div className="mt-6 flex items-center text-cyan-400 opacity-0 group-hover:opacity-100 transform translate-x-0 group-hover:translate-x-2 transition-all duration-300">
-                      <span className="text-sm font-semibold">Learn more</span>
-                      <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* How It Works Section */}
-        <section className="min-h-screen py-24 px-4 sm:px-6 lg:px-8 relative">
-          <div className="max-w-7xl mx-auto">
-            <h2 className="text-5xl sm:text-6xl lg:text-7xl font-black text-center mb-20">
-              <span className="bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">
-                How It Works
-              </span>
-            </h2>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-16 items-center">
-              {/* Left side - Text */}
-              <div>
-                <div className="space-y-8">
-                  {[
-                    {
-                      num: '01',
-                      title: 'Upload or Describe',
-                      desc: 'Share an image or describe what you\'re looking for in natural language',
-                    },
-                    {
-                      num: '02',
-                      title: 'AI Analysis',
-                      desc: 'Our AI instantly analyzes visual features, colors, objects, and style',
-                    },
-                    {
-                      num: '03',
-                      title: 'Smart Matching',
-                      desc: 'Find similar images from our database using advanced algorithms',
-                    },
-                    {
-                      num: '04',
-                      title: 'Refine & Export',
-                      desc: 'Apply filters, save collections, and download with proper licensing',
-                    },
-                  ].map((step, i) => (
-                    <div key={i} className="flex gap-6 group cursor-pointer">
-                      <div className="flex-shrink-0">
-                        <div className="flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 group-hover:shadow-lg group-hover:shadow-cyan-500/50 transition-all duration-300">
-                          <span className="text-xl font-bold text-white">{step.num}</span>
-                        </div>
-                      </div>
-                      <div className="flex-grow">
-                        <h3 className="text-xl font-bold text-white group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-cyan-400 group-hover:to-blue-500 transition-all duration-300">
-                          {step.title}
-                        </h3>
-                        <p className="text-gray-400 group-hover:text-gray-300 transition-colors mt-2">
-                          {step.desc}
-                        </p>
-                      </div>
-                    </div>
+function Footer() {
+  return (
+    <footer style={{ background: 'rgba(6,8,24,0.9)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,212,255,0.1)', padding: '60px 40px 32px' }}>
+      <Reveal direction="up">
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 40, marginBottom: 48 }}>
+            {FOOTER_COLS.map((col, i) => (
+              <div key={i}>
+                <h4 style={{ color: '#00d4ff', fontWeight: 700, marginBottom: 16, fontSize: 14, letterSpacing: 1 }}>{col.title}</h4>
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {col.links.map((link, j) => (
+                    <li key={j}><a href="#" style={{ color: 'rgba(140,160,190,0.6)', textDecoration: 'none', fontSize: 14, transition: 'color 0.2s' }}
+                      onMouseEnter={e => (e.target.style.color = '#00d4ff')}
+                      onMouseLeave={e => (e.target.style.color = 'rgba(140,160,190,0.6)')}
+                    >{link}</a></li>
                   ))}
-                </div>
+                </ul>
               </div>
-
-              {/* Right side - Visual */}
-              <div className="relative h-full min-h-96">
-                <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-purple-500/10 to-pink-500/10 rounded-3xl blur-3xl" />
-                <div className="relative rounded-3xl border border-white/20 bg-slate-800/30 backdrop-blur-xl p-8 flex items-center justify-center min-h-96">
-                  <div className="text-center">
-                    <div className="text-6xl mb-4 animate-bounce">🔍</div>
-                    <p className="text-gray-400">Interactive preview coming soon</p>
-                  </div>
-                </div>
-              </div>
-            </div>
+            ))}
           </div>
-        </section>
-
-        {/* Gallery Showcase */}
-        <section className="min-h-screen py-24 px-4 sm:px-6 lg:px-8 relative">
-          <div className="max-w-7xl mx-auto">
-            <h2 className="text-5xl sm:text-6xl lg:text-7xl font-black text-center mb-20">
-              <span className="bg-gradient-to-r from-pink-400 to-orange-500 bg-clip-text text-transparent">
-                Explore Collections
-              </span>
-            </h2>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {[
-                { emoji: '🌅', name: 'Landscapes', count: '2.4M' },
-                { emoji: '🌊', name: 'Water', count: '1.8M' },
-                { emoji: '🏙️', name: 'Urban', count: '3.2M' },
-                { emoji: '🌲', name: 'Nature', count: '4.1M' },
-                { emoji: '🌺', name: 'Flowers', count: '1.9M' },
-                { emoji: '🦋', name: 'Wildlife', count: '2.7M' },
-                { emoji: '🌙', name: 'Night Sky', count: '0.9M' },
-                { emoji: '✨', name: 'Abstract', count: '3.6M' },
-              ].map((collection, i) => (
-                <div
-                  key={i}
-                  className="group relative overflow-hidden rounded-2xl aspect-square cursor-pointer"
-                >
-                  <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/20 via-purple-500/20 to-pink-500/20 group-hover:from-cyan-500/40 group-hover:via-purple-500/40 group-hover:to-pink-500/40 transition-all duration-300" />
-                  <div className="absolute inset-0 backdrop-blur-sm group-hover:backdrop-blur-0 transition-all duration-300" />
-                  <div className="relative h-full flex flex-col items-center justify-center p-6 text-center border border-white/10 group-hover:border-white/30 rounded-2xl transition-all duration-300 group-hover:bg-slate-800/30">
-                    <div className="text-6xl mb-4 group-hover:scale-150 transition-transform duration-300">
-                      {collection.emoji}
-                    </div>
-                    <h3 className="text-xl font-bold text-white mb-2 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-cyan-400 group-hover:to-pink-500">
-                      {collection.name}
-                    </h3>
-                    <p className="text-sm text-gray-400 group-hover:text-gray-300">
-                      {collection.count} images
-                    </p>
-                    <div className="mt-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                      <span className="text-cyan-400 font-semibold text-sm">Explore →</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+          <div style={{ borderTop: '1px solid rgba(0,212,255,0.08)', paddingTop: 24, textAlign: 'center', color: 'rgba(100,120,150,0.5)', fontSize: 13 }}>
+            © 2024 AetherPix. All rights reserved. | Crafted with ✨
           </div>
-        </section>
+        </div>
+      </Reveal>
+    </footer>
+  );
+}
 
-        {/* Testimonials */}
-        <section className="min-h-screen py-24 px-4 sm:px-6 lg:px-8 relative">
-          <div className="max-w-7xl mx-auto">
-            <h2 className="text-5xl sm:text-6xl lg:text-7xl font-black text-center mb-20">
-              <span className="bg-gradient-to-r from-blue-400 to-cyan-500 bg-clip-text text-transparent">
-                Loved by Creators
-              </span>
-            </h2>
+// ─── Root ─────────────────────────────────────────────────────────────────────
+export default function AetherPix() {
+  return (
+    <div style={{ background: 'linear-gradient(160deg,#040813 0%,#080e2e 40%,#0c0820 70%,#040813 100%)', minHeight: '100vh', color: '#fff', fontFamily: "'Inter','Segoe UI',sans-serif", overflowX: 'hidden' }}>
+      {/* Ambient glow blobs */}
+      <div style={{ position: 'fixed', top: '10%', left: '15%', width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle,rgba(0,212,255,0.06) 0%,transparent 70%)', pointerEvents: 'none', zIndex: 0 }} />
+      <div style={{ position: 'fixed', bottom: '20%', right: '10%', width: 500, height: 500, borderRadius: '50%', background: 'radial-gradient(circle,rgba(168,85,247,0.07) 0%,transparent 70%)', pointerEvents: 'none', zIndex: 0 }} />
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {[
-                {
-                  name: 'Sarah Chen',
-                  role: 'Graphic Designer',
-                  content: 'AetherPix has revolutionized my design workflow. Finding the perfect stock image now takes seconds instead of hours.',
-                  avatar: '👩‍🎨',
-                },
-                {
-                  name: 'Marcus Johnson',
-                  role: 'Photographer',
-                  content: 'The AI really understands composition and lighting. It\'s like having a visual search expert at your fingertips.',
-                  avatar: '👨‍📷',
-                },
-                {
-                  name: 'Elena Rodriguez',
-                  role: 'Content Creator',
-                  content: 'Privacy matters to me. I love that AetherPix doesn\'t track my searches. It\'s the search engine I\'ve been waiting for.',
-                  avatar: '👩‍💻',
-                },
-              ].map((testimonial, i) => (
-                <div
-                  key={i}
-                  className="group relative"
-                >
-                  <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-600 to-blue-600 rounded-2xl opacity-0 group-hover:opacity-50 blur transition duration-300" />
-                  <div className="relative bg-slate-800/50 backdrop-blur-xl rounded-2xl p-8 border border-white/10 group-hover:border-white/30 transition-all duration-300">
-                    <div className="flex items-center gap-4 mb-6">
-                      <div className="text-4xl">{testimonial.avatar}</div>
-                      <div>
-                        <h4 className="font-bold text-white">{testimonial.name}</h4>
-                        <p className="text-sm text-cyan-400">{testimonial.role}</p>
-                      </div>
-                    </div>
-                    <p className="text-gray-300 italic">"{testimonial.content}"</p>
-                    <div className="mt-4 flex gap-1">
-                      {[...Array(5)].map((_, i) => (
-                        <span key={i} className="text-yellow-400">⭐</span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
+      <ParticleCanvas />
+      <Navbar />
 
-        {/* CTA Section */}
-        <section className="min-h-screen py-24 px-4 sm:px-6 lg:px-8 flex items-center justify-center relative">
-          <div className="absolute inset-0">
-            <div className="absolute inset-0 bg-gradient-to-r from-cyan-600/10 via-purple-600/10 to-pink-600/10 rounded-full filter blur-3xl" />
-          </div>
-
-          <div className="relative z-10 text-center max-w-4xl mx-auto">
-            <h2 className="text-5xl sm:text-6xl lg:text-7xl font-black mb-8">
-              <span className="bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 bg-clip-text text-transparent">
-                Ready to Transform Your Search?
-              </span>
-            </h2>
-
-            <p className="text-xl sm:text-2xl text-gray-300 mb-12 leading-relaxed">
-              Join thousands of creators, designers, and professionals discovering images smarter with AetherPix
-            </p>
-
-            <div className="flex flex-col sm:flex-row gap-6 justify-center items-center mb-12">
-              <button className="group px-10 py-4 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-lg font-bold text-lg hover:shadow-2xl hover:shadow-cyan-500/50 transition-all duration-300 transform hover:scale-105 relative overflow-hidden">
-                <span className="relative z-10">Get Started Free</span>
-              </button>
-              <button className="px-10 py-4 border-2 border-cyan-400/50 rounded-lg font-bold text-lg text-cyan-300 hover:bg-cyan-500/10 hover:border-cyan-400 transition-all duration-300 transform hover:scale-105">
-                Schedule Demo
-              </button>
-            </div>
-
-            <p className="text-gray-500 text-sm">
-              ✨ No credit card required • ⚡ Instant setup • 🚀 Start searching in 30 seconds
-            </p>
-          </div>
-        </section>
-
-        {/* Footer */}
-        <footer className="bg-slate-950/95 backdrop-blur-xl border-t border-white/10 py-16 px-4 sm:px-6 lg:px-8">
-          <div className="max-w-7xl mx-auto">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
-              {[
-                {
-                  title: 'Product',
-                  links: ['Features', 'Collections', 'API', 'Pricing'],
-                },
-                {
-                  title: 'Company',
-                  links: ['About', 'Blog', 'Press', 'Careers'],
-                },
-                {
-                  title: 'Resources',
-                  links: ['Documentation', 'Community', 'Support', 'Status'],
-                },
-                {
-                  title: 'Legal',
-                  links: ['Privacy', 'Terms', 'Cookies', 'Contact'],
-                },
-              ].map((col, i) => (
-                <div key={i}>
-                  <h4 className="font-bold text-white mb-4">{col.title}</h4>
-                  <ul className="space-y-2">
-                    {col.links.map((link, j) => (
-                      <li key={j}>
-                        <a href="#" className="text-gray-500 hover:text-cyan-400 transition-colors text-sm">
-                          {link}
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-
-            <div className="border-t border-white/10 pt-8">
-              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                <p className="text-gray-500 text-sm">
-                  © 2024 AetherPix. All rights reserved.
-                </p>
-                <div className="flex gap-6">
-                  {['Twitter', 'GitHub', 'LinkedIn', 'Discord'].map((social, i) => (
-                    <a
-                      key={i}
-                      href="#"
-                      className="text-gray-500 hover:text-cyan-400 transition-colors text-sm"
-                    >
-                      {social}
-                    </a>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </footer>
+      <div style={{ position: 'relative', zIndex: 10 }}>
+        <Hero />
+        <Features />
+        <Gallery />
+        <Stats />
+        <Testimonials />
+        <CTA />
+        <Footer />
       </div>
 
-      {/* Global Styles */}
       <style>{`
-        @keyframes gradient-shift {
-          0%, 100% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-        }
-
-        @keyframes float {
-          0%, 100% { transform: translateY(0px); }
-          50% { transform: translateY(-20px); }
-        }
-
-        @keyframes glow {
-          0%, 100% { box-shadow: 0 0 20px rgba(0, 212, 255, 0.5); }
-          50% { box-shadow: 0 0 40px rgba(0, 212, 255, 0.8); }
-        }
-
-        html {
-          scroll-behavior: smooth;
-        }
-
-        ::-webkit-scrollbar {
-          width: 12px;
-        }
-
-        ::-webkit-scrollbar-track {
-          background: rgba(15, 20, 25, 0.5);
-        }
-
-        ::-webkit-scrollbar-thumb {
-          background: linear-gradient(180deg, #06b6d4, #3b82f6);
-          border-radius: 6px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-          background: linear-gradient(180deg, #00d4ff, #0066ff);
-        }
-
-        .animate-bounce {
-          animation: bounce 2s infinite;
-        }
-
-        @keyframes bounce {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-10px); }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html { scroll-behavior: smooth; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(4,8,20,0.8); }
+        ::-webkit-scrollbar-thumb { background: linear-gradient(180deg,#00d4ff,#3b82f6); border-radius: 4px; }
+        @keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) {
+          * { transition: none !important; animation: none !important; }
         }
       `}</style>
     </div>
