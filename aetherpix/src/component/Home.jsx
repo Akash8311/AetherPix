@@ -1,411 +1,643 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useContext, createContext, useCallback } from 'react';
 
-// ─── Scroll-reveal hook ───────────────────────────────────────────────────────
-function useScrollReveal(options = {}) {
+// ─── Theme ─────────────────────────────────────────────────────────────────
+const ThemeContext = createContext(null);
+const useTheme = () => useContext(ThemeContext);
+
+const THEMES = {
+  dark: {
+    mode: 'dark',
+    pageBg: 'linear-gradient(155deg,#02030a 0%,#050a1f 40%,#070512 70%,#02030a 100%)',
+    surface: 'rgba(10,14,38,0.62)',
+    surfaceStrong: 'rgba(8,11,30,0.88)',
+    border: 'rgba(0,140,255,0.16)',
+    borderStrong: 'rgba(0,140,255,0.45)',
+    text: '#f2f6ff',
+    textDim: 'rgba(190,205,235,0.7)',
+    textFaint: 'rgba(140,160,200,0.5)',
+    accent: '#1e90ff',
+    accent2: '#0b3d91',
+    glow: 'rgba(30,144,255,0.28)',
+  },
+  light: {
+    mode: 'light',
+    pageBg: 'linear-gradient(155deg,#f4f8ff 0%,#e8eefc 40%,#eef1fb 70%,#f6f9ff 100%)',
+    surface: 'rgba(255,255,255,0.65)',
+    surfaceStrong: 'rgba(255,255,255,0.9)',
+    border: 'rgba(10,30,70,0.1)',
+    borderStrong: 'rgba(10,40,100,0.28)',
+    text: '#040a1a',
+    textDim: 'rgba(15,25,55,0.72)',
+    textFaint: 'rgba(15,25,55,0.45)',
+    accent: '#0b5fd6',
+    accent2: '#001a40',
+    glow: 'rgba(11,95,214,0.18)',
+  },
+};
+
+// ─── Real image search ──────────────────────────────────────────────────────
+// Uses the Openverse API (api.openverse.org) — free, public, no API key required.
+// It indexes hundreds of millions of openly-licensed images from across the web.
+async function searchImages(query, pageSize = 12) {
+  const url = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}&page_size=${pageSize}&mature=false`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Search failed (${res.status})`);
+  const data = await res.json();
+  return (data.results || []).map((r) => ({
+    id: r.id,
+    url: r.thumbnail || r.url,
+    fullUrl: r.url,
+    title: r.title || query,
+    creator: r.creator || 'Unknown',
+    source: r.source || r.provider || '',
+    license: (r.license || '').toUpperCase(),
+    link: r.foreign_landing_url || r.url,
+  }));
+}
+
+// ─── Scroll-animated Letter-by-Letter Text ────────────────────────────────────
+function AnimatedText({ text, style = {}, as: Tag = 'span', delay = 0 }) {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setVisible(true);
-          observer.unobserve(el); // fire once
-        }
-      },
-      { threshold: 0.15, ...options }
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setVisible(true); },
+      { threshold: 0.15 }
     );
-    observer.observe(el);
-    return () => observer.disconnect();
+    obs.observe(el);
+    return () => obs.disconnect();
   }, []);
 
-  return [ref, visible];
+  return (
+    <Tag ref={ref} style={{ display: 'inline', ...style }}>
+      {text.split('').map((char, i) => (
+        <span
+          key={i}
+          style={{
+            display: 'inline-block',
+            opacity: visible ? 1 : 0,
+            transform: visible ? 'translateY(0px)' : 'translateY(24px)',
+            transition: `opacity 0.45s ease ${delay + i * 0.028}s, transform 0.45s ease ${delay + i * 0.028}s`,
+            whiteSpace: char === ' ' ? 'pre' : 'normal',
+          }}
+        >
+          {char}
+        </span>
+      ))}
+    </Tag>
+  );
 }
 
-// ─── Animated section wrapper ─────────────────────────────────────────────────
-function Reveal({ children, delay = 0, direction = 'up', className = '' }) {
-  const [ref, visible] = useScrollReveal();
-
-  const transforms = {
-    up: 'translateY(48px)',
-    down: 'translateY(-48px)',
-    left: 'translateX(-48px)',
-    right: 'translateX(48px)',
-    scale: 'scale(0.85)',
-    none: 'none',
-  };
-
+// ─── Logo that slides in left -> right, then loops a subtle sweep ───────────
+function SlidingLogo({ size = 22 }) {
+  const [entered, setEntered] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setEntered(true), 60); return () => clearTimeout(t); }, []);
+  const theme = useTheme();
   return (
-    <div
-      ref={ref}
-      className={className}
-      style={{
-        opacity: visible ? 1 : 0,
-        transform: visible ? 'none' : transforms[direction],
-        transition: `opacity 0.7s ease ${delay}s, transform 0.7s cubic-bezier(0.22,1,0.36,1) ${delay}s`,
-      }}
-    >
+    <span style={{ position: 'relative', overflow: 'hidden', display: 'inline-block' }}>
+      <span style={{
+        display: 'inline-block',
+        fontSize: size, fontWeight: 900, letterSpacing: -0.5,
+        background: `linear-gradient(90deg,${theme.accent},#7fc2ff,${theme.accent})`,
+        backgroundSize: '200% 100%',
+        WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+        transform: entered ? 'translateX(0)' : 'translateX(-140%)',
+        opacity: entered ? 1 : 0,
+        transition: 'transform 0.9s cubic-bezier(.16,.84,.44,1), opacity 0.6s ease',
+        animation: entered ? 'logoSweep 5s linear infinite 1s' : 'none',
+      }}>AetherPix</span>
+      <style>{`
+        @keyframes logoSweep {
+          0% { background-position: 0% 0; }
+          50% { background-position: 100% 0; }
+          100% { background-position: 0% 0; }
+        }
+      `}</style>
+    </span>
+  );
+}
+
+// ─── 3D Rotating Cube Canvas ──────────────────────────────────────────────────
+function ThreeCanvas() {
+  const canvasRef = useRef(null);
+  const animRef = useRef(null);
+  const mouseRef = useRef({ x: 0, y: 0 });
+  const theme = useTheme();
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    let W = canvas.width = window.innerWidth;
+    let H = canvas.height = window.innerHeight;
+
+    const resize = () => { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; };
+    window.addEventListener('resize', resize);
+    const onMouse = (e) => { mouseRef.current = { x: (e.clientX / W - 0.5) * 2, y: (e.clientY / H - 0.5) * 2 }; };
+    window.addEventListener('mousemove', onMouse);
+
+    const project = (x, y, z, fov, cx, cy) => { const scale = fov / (fov + z); return { x: x * scale + cx, y: y * scale + cy, scale }; };
+    const makeCube = (cx, cy, cz, size) => {
+      const h = size / 2;
+      const verts = [[-h,-h,-h],[h,-h,-h],[h,h,-h],[-h,h,-h],[-h,-h,h],[h,-h,h],[h,h,h],[-h,h,h]].map(([x,y,z]) => [x+cx,y+cy,z+cz]);
+      const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+      return { verts, edges, rx:0, ry:0, rz:0, cx, cy, cz, size };
+    };
+    const rotateX = ([x,y,z],a) => [x, y*Math.cos(a)-z*Math.sin(a), y*Math.sin(a)+z*Math.cos(a)];
+    const rotateY = ([x,y,z],a) => [x*Math.cos(a)+z*Math.sin(a), y, -x*Math.sin(a)+z*Math.cos(a)];
+    const rotateZ = ([x,y,z],a) => [x*Math.cos(a)-y*Math.sin(a), x*Math.sin(a)+y*Math.cos(a), z];
+
+    const cubes = Array.from({ length: 14 }, () => ({
+      ...makeCube((Math.random()-.5)*560, (Math.random()-.5)*280, (Math.random()-.5)*280-100, 30+Math.random()*50),
+      rx: Math.random()*Math.PI*2, ry: Math.random()*Math.PI*2, rz: Math.random()*Math.PI*2,
+      drx: (Math.random()-.5)*.008, dry: (Math.random()-.5)*.01, drz: (Math.random()-.5)*.005,
+      hue: 205, alpha: .12+Math.random()*.2,
+    }));
+    const particles = Array.from({ length: 80 }, () => ({
+      x: (Math.random()-.5)*1400, y: (Math.random()-.5)*900, z: (Math.random()-.5)*600-200,
+      r: Math.random()*1.8+.4, vx: (Math.random()-.5)*.2, vy: (Math.random()-.5)*.2, vz: (Math.random()-.5)*.15,
+      hue: 205,
+    }));
+
+    const draw = () => {
+      ctx.clearRect(0,0,W,H);
+      const cx=W/2, cy=H/2, FOV=600;
+      const mx=mouseRef.current.x, my=mouseRef.current.y;
+      const gTX=my*.18, gTY=mx*.22;
+      const isLight = theme.mode === 'light';
+
+      cubes.forEach((cube) => {
+        cube.rx+=cube.drx+my*.0002; cube.ry+=cube.dry+mx*.0003; cube.rz+=cube.drz;
+        const pv = cube.verts.map(([vx,vy,vz]) => {
+          let v=[vx-cube.cx,vy-cube.cy,vz-cube.cz];
+          v=rotateX(v,cube.rx); v=rotateY(v,cube.ry); v=rotateZ(v,cube.rz);
+          v=rotateX(v,gTX); v=rotateY(v,gTY);
+          return [v[0]+cube.cx,v[1]+cube.cy,v[2]+cube.cz];
+        });
+        cube.edges.forEach(([a,b]) => {
+          const pa=project(pv[a][0],pv[a][1],pv[a][2],FOV,cx,cy);
+          const pb=project(pv[b][0],pv[b][1],pv[b][2],FOV,cx,cy);
+          if(pa.scale<0||pb.scale<0) return;
+          const avg=(pa.scale+pb.scale)/2;
+          ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y);
+          ctx.strokeStyle=`hsla(${cube.hue},100%,${isLight?38:70}%,${cube.alpha*avg*(isLight?0.5:0.8)})`; ctx.lineWidth=1.2*avg; ctx.stroke();
+        });
+      });
+      particles.forEach((p) => {
+        p.x+=p.vx; p.y+=p.vy; p.z+=p.vz;
+        if(Math.abs(p.x)>800) p.vx*=-1;
+        if(Math.abs(p.y)>500) p.vy*=-1;
+        if(Math.abs(p.z)>400) p.vz*=-1;
+        let v=[p.x,p.y,p.z]; v=rotateX(v,gTX); v=rotateY(v,gTY);
+        const pp=project(v[0],v[1],v[2],FOV,cx,cy);
+        if(pp.scale<=0) return;
+        ctx.beginPath(); ctx.arc(pp.x,pp.y,p.r*pp.scale,0,Math.PI*2);
+        ctx.fillStyle=`hsla(${p.hue},100%,${isLight?40:72}%,${(isLight?0.22:0.35)*pp.scale})`; ctx.fill();
+      });
+      animRef.current=requestAnimationFrame(draw);
+    };
+    draw();
+    return () => { cancelAnimationFrame(animRef.current); window.removeEventListener('resize',resize); window.removeEventListener('mousemove',onMouse); };
+  }, [theme.mode]);
+
+  return <canvas ref={canvasRef} style={{ position:'fixed',top:0,left:0,width:'100%',height:'100%',zIndex:0,pointerEvents:'none' }} />;
+}
+
+// ─── 3D Card ──────────────────────────────────────────────────────────────────
+function Card3D({ children, style={}, intensity=15 }) {
+  const ref = useRef(null);
+  const theme = useTheme();
+  const handleMove = (e) => {
+    const el=ref.current; if(!el) return;
+    const rect=el.getBoundingClientRect();
+    const x=(e.clientX-rect.left)/rect.width-.5;
+    const y=(e.clientY-rect.top)/rect.height-.5;
+    el.style.transform=`perspective(800px) rotateY(${x*intensity}deg) rotateX(${-y*intensity}deg) scale(1.03)`;
+    el.style.boxShadow=`${x*-12}px ${y*-12}px 50px ${theme.accent}22, 0 0 40px ${theme.accent}18`;
+  };
+  const handleLeave = () => {
+    const el=ref.current; if(!el) return;
+    el.style.transform='perspective(800px) rotateY(0deg) rotateX(0deg) scale(1)';
+    el.style.boxShadow='none';
+  };
+  return (
+    <div ref={ref} onMouseMove={handleMove} onMouseLeave={handleLeave}
+      style={{ transformStyle:'preserve-3d', transition:'transform 0.12s ease, box-shadow 0.12s ease', willChange:'transform', ...style }}>
       {children}
     </div>
   );
 }
 
-// ─── Animated counter ─────────────────────────────────────────────────────────
-function Counter({ target, suffix = '' }) {
-  const [ref, visible] = useScrollReveal();
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    if (!visible) return;
-    const num = parseFloat(target.replace(/[^0-9.]/g, ''));
-    if (isNaN(num)) return;
-    let start = 0;
-    const duration = 1800;
-    const step = 16;
-    const increment = num / (duration / step);
-    const timer = setInterval(() => {
-      start += increment;
-      if (start >= num) { setCount(num); clearInterval(timer); }
-      else setCount(Math.floor(start * 10) / 10);
-    }, step);
-    return () => clearInterval(timer);
-  }, [visible, target]);
-
-  const raw = parseFloat(target.replace(/[^0-9.]/g, ''));
-  const prefix = target.match(/^[^0-9]*/)?.[0] || '';
-  const suf = target.match(/[^0-9.]+$/)?.[0] || suffix;
-
+// ─── Dark/Light toggle button ─────────────────────────────────────────────
+function ThemeToggle() {
+  const { mode, toggle } = useTheme();
+  const isDark = mode === 'dark';
   return (
-    <span ref={ref}>
-      {visible ? `${prefix}${Number.isInteger(raw) ? Math.floor(count) : count}${suf}` : `${prefix}0${suf}`}
-    </span>
-  );
-}
-
-// ─── Particle canvas ──────────────────────────────────────────────────────────
-function ParticleCanvas() {
-  const canvasRef = useRef(null);
-  const animRef = useRef(null);
-  const mouseRef = useRef({ x: 0, y: 0 });
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    let W = window.innerWidth, H = window.innerHeight;
-
-    const resize = () => {
-      W = canvas.width = window.innerWidth;
-      H = canvas.height = window.innerHeight;
-    };
-    resize();
-    window.addEventListener('resize', resize);
-
-    const onMouse = (e) => { mouseRef.current = { x: e.clientX, y: e.clientY }; };
-    window.addEventListener('mousemove', onMouse);
-
-    const COUNT = 120;
-    const particles = Array.from({ length: COUNT }, () => ({
-      x: Math.random() * W,
-      y: Math.random() * H,
-      r: Math.random() * 1.5 + 0.3,
-      vx: (Math.random() - 0.5) * 0.3,
-      vy: (Math.random() - 0.5) * 0.3,
-      alpha: Math.random() * 0.5 + 0.2,
-      hue: Math.random() > 0.5 ? 185 : 270, // cyan or purple
-    }));
-
-    const draw = () => {
-      ctx.clearRect(0, 0, W, H);
-      const mx = mouseRef.current.x;
-      const my = mouseRef.current.y;
-
-      particles.forEach((p) => {
-        // subtle mouse repulsion
-        const dx = p.x - mx, dy = p.y - my;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 100) {
-          p.x += (dx / dist) * 0.6;
-          p.y += (dy / dist) * 0.6;
-        }
-
-        p.x += p.vx;
-        p.y += p.vy;
-        if (p.x < 0) p.x = W;
-        if (p.x > W) p.x = 0;
-        if (p.y < 0) p.y = H;
-        if (p.y > H) p.y = 0;
-
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${p.hue},100%,70%,${p.alpha})`;
-        ctx.fill();
-      });
-
-      // draw connecting lines
-      for (let i = 0; i < COUNT; i++) {
-        for (let j = i + 1; j < COUNT; j++) {
-          const dx = particles[i].x - particles[j].x;
-          const dy = particles[i].y - particles[j].y;
-          const d = Math.sqrt(dx * dx + dy * dy);
-          if (d < 90) {
-            ctx.beginPath();
-            ctx.moveTo(particles[i].x, particles[i].y);
-            ctx.lineTo(particles[j].x, particles[j].y);
-            ctx.strokeStyle = `rgba(0,212,255,${(1 - d / 90) * 0.12})`;
-            ctx.lineWidth = 0.5;
-            ctx.stroke();
-          }
-        }
-      }
-
-      animRef.current = requestAnimationFrame(draw);
-    };
-    draw();
-
-    return () => {
-      cancelAnimationFrame(animRef.current);
-      window.removeEventListener('resize', resize);
-      window.removeEventListener('mousemove', onMouse);
-    };
-  }, []);
-
-  return (
-    <canvas
-      ref={canvasRef}
+    <button
+      onClick={toggle}
+      aria-label="Toggle dark or light mode"
       style={{
-        position: 'fixed', top: 0, left: 0,
-        width: '100%', height: '100%',
-        zIndex: 0, pointerEvents: 'none',
+        width: 56, height: 30, borderRadius: 50, position: 'relative', cursor: 'pointer',
+        border: `1px solid ${isDark ? 'rgba(0,140,255,0.4)' : 'rgba(11,95,214,0.35)'}`,
+        background: isDark ? 'rgba(8,12,34,0.85)' : 'rgba(255,255,255,0.85)',
+        transition: 'background 0.3s, border-color 0.3s',
+        padding: 3,
       }}
-    />
+    >
+      <span style={{
+        position: 'absolute', top: 2, left: isDark ? 28 : 2,
+        width: 24, height: 24, borderRadius: '50%',
+        background: isDark ? 'linear-gradient(135deg,#1e90ff,#0b3d91)' : 'linear-gradient(135deg,#ffd166,#fcb045)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12,
+        transition: 'left 0.3s cubic-bezier(.4,0,.2,1)',
+        boxShadow: isDark ? '0 0 10px rgba(30,144,255,0.6)' : '0 0 10px rgba(252,176,69,0.6)',
+      }}>{isDark ? '🌙' : '☀️'}</span>
+    </button>
   );
 }
 
 // ─── Navbar ───────────────────────────────────────────────────────────────────
 function Navbar() {
   const [scrolled, setScrolled] = useState(false);
-
+  const theme = useTheme();
   useEffect(() => {
-    const handler = () => setScrolled(window.scrollY > 40);
-    window.addEventListener('scroll', handler);
-    return () => window.removeEventListener('scroll', handler);
-  }, []);
-
+    const handler=()=>setScrolled(window.scrollY>40);
+    window.addEventListener('scroll',handler);
+    return ()=>window.removeEventListener('scroll',handler);
+  },[]);
   return (
-    <nav
-      style={{
-        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
-        padding: '16px 40px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        backdropFilter: scrolled ? 'blur(18px)' : 'none',
-        background: scrolled ? 'rgba(10,14,39,0.85)' : 'transparent',
-        borderBottom: scrolled ? '1px solid rgba(0,212,255,0.12)' : '1px solid transparent',
-        transition: 'all 0.4s ease',
-      }}
-    >
-      <span style={{ fontSize: 22, fontWeight: 800, background: 'linear-gradient(90deg,#00d4ff,#a855f7)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-        AetherPix
-      </span>
-      <div style={{ display: 'flex', gap: 32 }}>
-        {['Features', 'Gallery', 'Pricing', 'API'].map((link) => (
-          <a key={link} href="#" style={{ color: 'rgba(200,220,255,0.7)', textDecoration: 'none', fontSize: 14, fontWeight: 500, transition: 'color 0.2s' }}
-            onMouseEnter={e => (e.target.style.color = '#00d4ff')}
-            onMouseLeave={e => (e.target.style.color = 'rgba(200,220,255,0.7)')}
+    <nav style={{
+      position:'fixed',top:0,left:0,right:0,zIndex:100,
+      padding:'14px 48px', display:'flex',alignItems:'center',justifyContent:'space-between',
+      backdropFilter:scrolled?'blur(24px)':'none',
+      background:scrolled?theme.surfaceStrong:'transparent',
+      borderBottom:scrolled?`1px solid ${theme.border}`:'1px solid transparent',
+      transition:'all 0.4s ease',
+    }}>
+      <SlidingLogo />
+      <div style={{ display:'flex',gap:32,alignItems:'center' }}>
+        {['Features','Pricing','Blog'].map((link)=>(
+          <a key={link} href={`#${link.toLowerCase()}`}
+            style={{ color:theme.textDim,textDecoration:'none',fontSize:14,fontWeight:500,transition:'color 0.2s' }}
+            onMouseEnter={e=>(e.target.style.color=theme.accent)}
+            onMouseLeave={e=>(e.target.style.color=theme.textDim)}
           >{link}</a>
         ))}
       </div>
-      <button style={{
-        padding: '8px 20px', background: 'linear-gradient(135deg,#00d4ff,#3b82f6)',
-        border: 'none', borderRadius: 50, color: '#fff', fontWeight: 600,
-        fontSize: 14, cursor: 'pointer', transition: 'box-shadow 0.3s',
-      }}>Sign up free</button>
+      <div style={{ display:'flex', alignItems:'center', gap:14 }}>
+        <ThemeToggle />
+        <a href="#pricing" style={{
+          padding:'8px 18px',background:'transparent',
+          border:`1.5px solid ${theme.borderStrong}`,borderRadius:50,color:theme.accent,fontWeight:700,fontSize:13,
+          cursor:'pointer',textDecoration:'none', transition:'background 0.2s',
+        }}
+          onMouseEnter={e=>{e.currentTarget.style.background=`${theme.accent}1a`;}}
+          onMouseLeave={e=>{e.currentTarget.style.background='transparent';}}
+        >Pricing</a>
+        <button style={{
+          padding:'9px 22px',background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`,
+          border:'none',borderRadius:50,color:'#fff',fontWeight:700,fontSize:14,
+          cursor:'pointer',letterSpacing:0.3,boxShadow:`0 0 20px ${theme.glow}`,
+          transition:'box-shadow 0.3s, transform 0.2s',
+        }}
+          onMouseEnter={e=>{e.target.style.boxShadow=`0 0 36px ${theme.glow}`;e.target.style.transform='scale(1.05)';}}
+          onMouseLeave={e=>{e.target.style.boxShadow=`0 0 20px ${theme.glow}`;e.target.style.transform='scale(1)';}}
+        >Try Free</button>
+      </div>
     </nav>
+  );
+}
+
+// ─── Marquee of other AI image search engines ─────────────────────────────
+const OTHER_ENGINES = [
+  'PixelMind AI', 'VisionScope', 'NeuralLens', 'DeepFrame Search',
+  'Lookora AI', 'ImageForge', 'PicSensei', 'ScanVerse',
+  'ClarityNet', 'Glimpse AI', 'FrameQuery', 'OptiVision',
+];
+
+function EngineMarquee() {
+  const theme = useTheme();
+  const loopItems = [...OTHER_ENGINES, ...OTHER_ENGINES];
+  return (
+    <div style={{ width:'100%', overflow:'hidden', padding:'18px 0', position:'relative' }}>
+      <div style={{
+        position:'absolute', inset:0, zIndex:2, pointerEvents:'none',
+        background:`linear-gradient(90deg, ${theme.mode==='dark'?'#02030a':'#f4f8ff'} 0%, transparent 8%, transparent 92%, ${theme.mode==='dark'?'#02030a':'#f4f8ff'} 100%)`,
+      }} />
+      <div style={{
+        display:'flex', gap:40, width:'max-content',
+        animation:'marqueeScroll 26s linear infinite',
+      }}>
+        {loopItems.map((name, i) => (
+          <span key={i} style={{
+            display:'inline-flex', alignItems:'center', gap:8,
+            fontSize:14, fontWeight:600, color:theme.textFaint,
+            whiteSpace:'nowrap', letterSpacing:0.3,
+          }}>
+            <span style={{ width:5,height:5,borderRadius:'50%',background:theme.accent,opacity:0.6 }} />
+            {name}
+          </span>
+        ))}
+      </div>
+      <style>{`
+        @keyframes marqueeScroll {
+          from { transform: translateX(-100%); }
+          to   { transform: translateX(0%); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ─── Live Image Search Result Grid ─────────────────────────────────────────
+function ImageGrid({ images, loading, error }) {
+  const [hovered, setHovered] = useState(null);
+  const theme = useTheme();
+
+  if (error) {
+    return (
+      <p style={{ color: theme.textFaint, fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
+        Couldn't load images: {error}
+      </p>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div style={{
+        display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, maxWidth:640, margin:'0 auto',
+      }}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} style={{
+            aspectRatio:'4/3', borderRadius:12,
+            background: theme.surface, border:`1.5px solid ${theme.border}`,
+            animation: 'pulseLoad 1.2s ease-in-out infinite',
+            animationDelay: `${i * 0.08}s`,
+          }} />
+        ))}
+        <style>{`@keyframes pulseLoad { 0%,100% { opacity:0.4; } 50% { opacity:0.9; } }`}</style>
+      </div>
+    );
+  }
+
+  if (!images || images.length === 0) {
+    return (
+      <p style={{ color: theme.textFaint, fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
+        No images found. Try a different search.
+      </p>
+    );
+  }
+
+  return (
+    <div style={{
+      display:'grid',
+      gridTemplateColumns:'repeat(3,1fr)',
+      gap:12, maxWidth:640, margin:'0 auto',
+    }}>
+      {images.map((img, i) => (
+        <a
+          key={img.id}
+          href={img.link}
+          target="_blank"
+          rel="noopener noreferrer"
+          onMouseEnter={()=>setHovered(img.id)}
+          onMouseLeave={()=>setHovered(null)}
+          style={{
+            position:'relative', borderRadius:12, overflow:'hidden',
+            aspectRatio:'4/3', cursor:'pointer', display:'block',
+            background: theme.surface,
+            border: hovered===img.id ? `1.5px solid ${theme.borderStrong}` : `1.5px solid ${theme.border}`,
+            transform: hovered===img.id ? 'scale(1.04) translateY(-2px)' : 'scale(1)',
+            boxShadow: hovered===img.id ? `0 8px 32px ${theme.glow}` : 'none',
+            transition:'all 0.25s ease',
+            opacity: 0,
+            animation: `fadeSlideIn 0.5s ease ${0.05 + i * 0.05}s forwards`,
+            textDecoration: 'none',
+          }}
+        >
+          <img
+            src={img.url}
+            alt={img.title}
+            loading="lazy"
+            style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }}
+          />
+          <div style={{
+            position:'absolute', bottom:0, left:0, right:0,
+            padding:'24px 10px 8px',
+            background:'linear-gradient(to top,rgba(2,3,10,0.85),transparent)',
+            opacity: hovered===img.id ? 1 : 0,
+            transform: hovered===img.id ? 'translateY(0)' : 'translateY(6px)',
+            transition:'all 0.25s ease',
+          }}>
+            <p style={{ color:'#fff',fontSize:11,fontWeight:700,marginBottom:4, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{img.title}</p>
+            <div style={{ display:'flex',gap:4,flexWrap:'wrap' }}>
+              <span style={{
+                fontSize:9,padding:'2px 6px',borderRadius:50,
+                background:'rgba(30,144,255,0.25)',color:'#9fd0ff',fontWeight:600,letterSpacing:0.5,
+              }}>{img.creator}</span>
+              {img.license && (
+                <span style={{
+                  fontSize:9,padding:'2px 6px',borderRadius:50,
+                  background:'rgba(30,144,255,0.25)',color:'#9fd0ff',fontWeight:600,letterSpacing:0.5,
+                }}>{img.license}</span>
+              )}
+            </div>
+          </div>
+          <div style={{
+            position:'absolute',top:8,right:8,
+            background:'rgba(30,144,255,0.18)',backdropFilter:'blur(8px)',
+            border:'1px solid rgba(30,144,255,0.35)',
+            borderRadius:50,padding:'2px 8px',
+            fontSize:9,color:'#cfe8ff',fontWeight:700,letterSpacing:0.5,
+          }}>AI</div>
+        </a>
+      ))}
+      <style>{`
+        @keyframes fadeSlideIn {
+          from { opacity:0; transform:translateY(16px); }
+          to   { opacity:1; transform:translateY(0); }
+        }
+      `}</style>
+    </div>
   );
 }
 
 // ─── Hero ─────────────────────────────────────────────────────────────────────
 function Hero() {
+  const theme = useTheme();
   const [query, setQuery] = useState('');
   const [typed, setTyped] = useState('');
-  const placeholders = ['sunsets over mountains', 'neon city rain', 'abstract geometry', 'deep ocean life'];
-  const phIdx = useRef(0);
-  const charIdx = useRef(0);
-  const forward = useRef(true);
+  const [isFocused, setIsFocused] = useState(false);
+  const [images, setImages] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [resultLabel, setResultLabel] = useState('TRENDING SEARCHES');
+  const [elapsed, setElapsed] = useState(null);
+  const debounceRef = useRef(null);
+
+  const placeholders=['sunsets over mountains','neon city rain','abstract geometry','deep ocean life'];
+  const phIdx=useRef(0), charIdx=useRef(0), forward=useRef(true);
 
   useEffect(() => {
-    const tick = setInterval(() => {
-      const ph = placeholders[phIdx.current];
-      if (forward.current) {
-        charIdx.current++;
-        if (charIdx.current >= ph.length) { forward.current = false; setTimeout(() => {}, 800); }
-      } else {
-        charIdx.current--;
-        if (charIdx.current <= 0) {
-          forward.current = true;
-          phIdx.current = (phIdx.current + 1) % placeholders.length;
-        }
-      }
-      setTyped(ph.slice(0, charIdx.current));
-    }, forward.current ? 60 : 40);
-    return () => clearInterval(tick);
+    const tick=setInterval(() => {
+      const ph=placeholders[phIdx.current];
+      if(forward.current){ charIdx.current++; if(charIdx.current>=ph.length) forward.current=false; }
+      else { charIdx.current--; if(charIdx.current<=0){ forward.current=true; phIdx.current=(phIdx.current+1)%placeholders.length; } }
+      setTyped(ph.slice(0,charIdx.current));
+    }, forward.current?65:42);
+    return ()=>clearInterval(tick);
+  },[]);
+
+  const runSearch = useCallback(async (q) => {
+    const term = q.trim() || 'sunsets over mountains';
+    setLoading(true);
+    setError(null);
+    const start = performance.now();
+    try {
+      const results = await searchImages(term, 12);
+      setImages(results);
+      setResultLabel(q.trim() ? `RESULTS FOR "${q.trim().toUpperCase()}"` : 'TRENDING SEARCHES');
+      setElapsed(((performance.now() - start) / 1000).toFixed(2));
+    } catch (e) {
+      setError(e.message || 'unknown error');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
+  // initial load
+  useEffect(() => { runSearch(''); /* eslint-disable-next-line */ }, []);
+
+  // debounced live search as user types
+  const handleChange = (e) => {
+    const val = e.target.value;
+    setQuery(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => runSearch(val), 500);
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    runSearch(query);
+  };
+
   return (
-    <section style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '120px 24px 80px' }}>
-      {/* Badge */}
-      <Reveal delay={0} direction="down">
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 16px', borderRadius: 50, border: '1px solid rgba(0,212,255,0.3)', background: 'rgba(0,212,255,0.06)', marginBottom: 28 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#00d4ff', display: 'inline-block', boxShadow: '0 0 8px #00d4ff' }} />
-          <span style={{ color: '#00d4ff', fontSize: 13, fontWeight: 600, letterSpacing: 1 }}>AI-POWERED IMAGE SEARCH</span>
-        </div>
-      </Reveal>
+    <section style={{ minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',textAlign:'center',padding:'140px 24px 40px' }}>
 
-      {/* Headline */}
-      <Reveal delay={0.1} direction="up">
-        <h1 style={{ fontSize: 'clamp(52px,9vw,100px)', fontWeight: 900, lineHeight: 1.05, margin: '0 0 20px', letterSpacing: -2 }}>
-          <span style={{ background: 'linear-gradient(135deg,#00d4ff 0%,#3b82f6 50%,#a855f7 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            AetherPix
-          </span>
-        </h1>
-        <p style={{ fontSize: 'clamp(18px,2.5vw,26px)', color: 'rgba(180,210,255,0.85)', maxWidth: 600, margin: '0 auto 12px', fontWeight: 300 }}>
-          Search the infinite universe of images
-        </p>
-        <p style={{ fontSize: 15, color: 'rgba(150,170,200,0.6)', maxWidth: 520, margin: '0 auto 48px', lineHeight: 1.7 }}>
-          AI-driven recognition · lightning-fast filters · billions of images indexed
-        </p>
-      </Reveal>
+      <div style={{ display:'inline-flex',alignItems:'center',gap:8,padding:'6px 18px',borderRadius:50,border:`1px solid ${theme.borderStrong}`,background:`${theme.accent}11`,marginBottom:32 }}>
+        <span style={{ width:7,height:7,borderRadius:'50%',background:theme.accent,display:'inline-block',boxShadow:`0 0 10px ${theme.accent}` }}/>
+        <span style={{ color:theme.accent,fontSize:12,fontWeight:700,letterSpacing:1.5 }}>AI-POWERED IMAGE SEARCH</span>
+      </div>
 
-      {/* Search */}
-      <Reveal delay={0.22} direction="up">
-        <div style={{ width: '100%', maxWidth: 620, marginBottom: 40, position: 'relative' }}>
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', background: 'rgba(15,23,60,0.7)', backdropFilter: 'blur(16px)', border: '1.5px solid rgba(0,212,255,0.25)', borderRadius: 50, overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,212,255,0.08)', transition: 'border-color 0.3s, box-shadow 0.3s' }}
-            onFocus={e => (e.currentTarget.style.borderColor = 'rgba(0,212,255,0.6)')}
-            onBlur={e => (e.currentTarget.style.borderColor = 'rgba(0,212,255,0.25)')}
-          >
-            <span style={{ paddingLeft: 24, color: 'rgba(0,212,255,0.5)', fontSize: 18 }}>🔍</span>
+      <h1 style={{ fontSize:'clamp(54px,9.5vw,108px)',fontWeight:900,lineHeight:1.0,letterSpacing:-3,margin:'0 0 22px' }}>
+        <AnimatedText
+          text="AetherPix"
+          style={{ background:`linear-gradient(135deg,${theme.accent} 0%,#0b3d91 60%,#001a40 100%)`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }}
+        />
+      </h1>
+
+      <p style={{ fontSize:'clamp(17px,2.4vw,24px)',color:theme.textDim,maxWidth:560,margin:'0 auto 10px',fontWeight:300,lineHeight:1.4 }}>
+        <AnimatedText text="Search the infinite universe of images" delay={0.3} />
+      </p>
+      <p style={{ fontSize:14,color:theme.textFaint,maxWidth:480,margin:'0 auto 40px',lineHeight:1.8 }}>
+        <AnimatedText text="Real images · live search · powered by the Openverse open image index" delay={0.6} />
+      </p>
+
+      <form onSubmit={handleSubmit} style={{ width:'100%',maxWidth:640,marginBottom:8 }}>
+        <Card3D intensity={6} style={{ borderRadius:50 }}>
+          <div style={{
+            display:'flex',alignItems:'center',
+            background:theme.surface,backdropFilter:'blur(20px)',
+            border:`1.5px solid ${isFocused?theme.borderStrong:theme.border}`,
+            borderRadius:50,overflow:'hidden',
+            boxShadow:isFocused?`0 0 48px ${theme.glow}`:`0 8px 40px ${theme.glow}`,
+            transition:'border-color 0.3s, box-shadow 0.3s',
+          }}>
+            <span style={{ paddingLeft:26,color:theme.textFaint,fontSize:18 }}>🔍</span>
             <input
               type="text"
               value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder={typed + '|'}
-              style={{ flex: 1, padding: '18px 16px', background: 'transparent', border: 'none', outline: 'none', color: '#e0f0ff', fontSize: 16 }}
+              onChange={handleChange}
+              onFocus={()=>setIsFocused(true)}
+              onBlur={()=>setIsFocused(false)}
+              placeholder={typed+'|'}
+              style={{ flex:1,padding:'19px 16px',background:'transparent',border:'none',outline:'none',color:theme.text,fontSize:16 }}
             />
-            <button style={{ margin: 6, padding: '12px 28px', background: 'linear-gradient(135deg,#00d4ff,#3b82f6)', border: 'none', borderRadius: 50, color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              Search
-            </button>
+            <button type="submit" style={{
+              marginRight:14, padding:'9px 20px',borderRadius:50,fontSize:13,fontWeight:700,cursor:'pointer',
+              background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`,border:'none',color:'#fff',
+              boxShadow:`0 0 16px ${theme.glow}`,
+            }}>Search</button>
           </div>
-        </div>
-      </Reveal>
+        </Card3D>
+      </form>
 
-      {/* CTA row */}
-      <Reveal delay={0.32} direction="up">
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
-          <button style={{ padding: '14px 36px', background: 'linear-gradient(135deg,#00d4ff,#3b82f6)', border: 'none', borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', boxShadow: '0 0 30px rgba(0,212,255,0.25)', transition: 'transform 0.2s,box-shadow 0.2s' }}
-            onMouseEnter={e => { e.target.style.transform = 'scale(1.05)'; e.target.style.boxShadow = '0 0 40px rgba(0,212,255,0.5)'; }}
-            onMouseLeave={e => { e.target.style.transform = 'scale(1)'; e.target.style.boxShadow = '0 0 30px rgba(0,212,255,0.25)'; }}
-          >Start Exploring</button>
-          <button style={{ padding: '14px 36px', background: 'transparent', border: '1.5px solid rgba(0,212,255,0.4)', borderRadius: 10, color: '#00d4ff', fontWeight: 600, fontSize: 15, cursor: 'pointer', transition: 'background 0.2s' }}
-            onMouseEnter={e => (e.target.style.background = 'rgba(0,212,255,0.08)')}
-            onMouseLeave={e => (e.target.style.background = 'transparent')}
-          >Learn More</button>
-        </div>
-      </Reveal>
+      <EngineMarquee />
 
-      {/* Scroll indicator */}
-      <Reveal delay={0.55} direction="none">
-        <div style={{ marginTop: 80, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, opacity: 0.5 }}>
-          <span style={{ fontSize: 12, letterSpacing: 2, color: '#00d4ff' }}>SCROLL</span>
-          <div style={{ width: 1, height: 48, background: 'linear-gradient(to bottom,#00d4ff,transparent)', animation: 'pulse 2s infinite' }} />
+      <div style={{ width:'100%',maxWidth:640,marginBottom:44, marginTop:20 }}>
+        <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12,padding:'0 4px' }}>
+          <span style={{ color:theme.accent,fontSize:12,fontWeight:600,letterSpacing:1 }}>{resultLabel}</span>
+          <span style={{ color:theme.textFaint,fontSize:11 }}>
+            {loading ? 'searching…' : `${images.length} results${elapsed ? ` · ${elapsed}s` : ''}`}
+          </span>
         </div>
-      </Reveal>
+        <ImageGrid images={images} loading={loading} error={error} />
+      </div>
+
+      <div style={{ display:'flex',gap:16,flexWrap:'wrap',justifyContent:'center' }}>
+        <button style={{
+          padding:'15px 40px',background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`,border:'none',borderRadius:12,
+          color:'#fff',fontWeight:800,fontSize:15,cursor:'pointer',boxShadow:`0 0 32px ${theme.glow}`,
+          transition:'transform 0.2s, box-shadow 0.2s',
+        }}
+          onMouseEnter={e=>{e.target.style.transform='scale(1.06) translateY(-2px)';e.target.style.boxShadow=`0 0 50px ${theme.glow}`;}}
+          onMouseLeave={e=>{e.target.style.transform='scale(1) translateY(0)';e.target.style.boxShadow=`0 0 32px ${theme.glow}`;}}
+        >Try Free</button>
+        <a href="#pricing" style={{
+          padding:'15px 40px',background:'transparent',border:`1.5px solid ${theme.borderStrong}`,borderRadius:12,
+          color:theme.accent,fontWeight:600,fontSize:15,cursor:'pointer',textDecoration:'none',
+          transition:'background 0.2s, border-color 0.2s, transform 0.2s', display:'inline-block',
+        }}
+          onMouseEnter={e=>{e.currentTarget.style.background=`${theme.accent}19`;e.currentTarget.style.transform='scale(1.04)';}}
+          onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.transform='scale(1)';}}
+        >View Pricing</a>
+      </div>
     </section>
   );
 }
 
 // ─── Features ─────────────────────────────────────────────────────────────────
 const FEATURES = [
-  { icon: '🎨', title: 'AI-Powered Recognition', desc: 'Advanced ML identifies objects, scenes, and styles in milliseconds.' },
-  { icon: '⚡', title: 'Lightning Fast', desc: 'Search billions of images with real-time filters and instant results.' },
-  { icon: '🎯', title: 'Smart Filters', desc: 'Filter by color, style, resolution, and custom AI-trained categories.' },
-  { icon: '🔐', title: 'Privacy First', desc: 'Your searches are encrypted and never stored or sold.' },
-  { icon: '🌐', title: 'Global Collection', desc: 'Millions of royalty-free, licensed, and original images worldwide.' },
-  { icon: '✨', title: 'Curated Collections', desc: 'Hand-picked galleries from top photographers and designers.' },
+  { icon:'🎨', title:'AI Recognition', desc:'Advanced ML identifies objects, scenes, and styles in milliseconds.' },
+  { icon:'⚡', title:'Lightning Fast', desc:'Search billions of images with real-time filters and instant results.' },
+  { icon:'🎯', title:'Smart Filters', desc:'Filter by color, style, resolution, and custom AI-trained categories.' },
+  { icon:'🔐', title:'Privacy First', desc:'Your searches are encrypted end-to-end and never stored or sold.' },
+  { icon:'🌐', title:'Global Collection', desc:'Millions of royalty-free, licensed, and original images worldwide.' },
+  { icon:'✨', title:'Curated Picks', desc:'Hand-picked galleries from top photographers and designers globally.' },
 ];
 
 function Features() {
+  const theme = useTheme();
   return (
-    <section style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 24px' }}>
-      <Reveal direction="up">
-        <div style={{ textAlign: 'center', marginBottom: 64 }}>
-          <p style={{ color: '#00d4ff', fontSize: 12, fontWeight: 700, letterSpacing: 3, marginBottom: 12 }}>CAPABILITIES</p>
-          <h2 style={{ fontSize: 'clamp(32px,5vw,52px)', fontWeight: 800, background: 'linear-gradient(90deg,#00d4ff,#3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: 0 }}>
-            Powerful Features
-          </h2>
-        </div>
-      </Reveal>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 24, maxWidth: 1100, width: '100%' }}>
-        {FEATURES.map((f, i) => (
-          <Reveal key={i} delay={i * 0.08} direction={i % 2 === 0 ? 'left' : 'right'}>
-            <div
-              style={{
-                padding: 32, borderRadius: 20,
-                background: 'rgba(15,23,60,0.5)', backdropFilter: 'blur(12px)',
-                border: '1px solid rgba(0,212,255,0.15)',
-                cursor: 'pointer', transition: 'transform 0.3s,border-color 0.3s,box-shadow 0.3s',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-6px)'; e.currentTarget.style.borderColor = 'rgba(0,212,255,0.5)'; e.currentTarget.style.boxShadow = '0 20px 60px rgba(0,212,255,0.12)'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.borderColor = 'rgba(0,212,255,0.15)'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              <div style={{ fontSize: 40, marginBottom: 16 }}>{f.icon}</div>
-              <h3 style={{ color: '#00d4ff', fontWeight: 700, fontSize: 18, marginBottom: 10 }}>{f.title}</h3>
-              <p style={{ color: 'rgba(160,185,220,0.7)', lineHeight: 1.7, fontSize: 14 }}>{f.desc}</p>
-            </div>
-          </Reveal>
-        ))}
+    <section id="features" style={{ minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'100px 24px' }}>
+      <div style={{ textAlign:'center',marginBottom:64 }}>
+        <p style={{ color:theme.accent,fontSize:12,fontWeight:700,letterSpacing:3,marginBottom:12 }}>CAPABILITIES</p>
+        <h2 style={{ fontSize:'clamp(32px,5vw,52px)',fontWeight:800,margin:0 }}>
+          <AnimatedText text="Powerful Features" style={{ background:`linear-gradient(90deg,${theme.accent},${theme.accent2})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }} />
+        </h2>
       </div>
-    </section>
-  );
-}
-
-// ─── Gallery ──────────────────────────────────────────────────────────────────
-const EMOJIS = ['🌅', '🌊', '🏔️', '🌲', '🌺', '🦋', '🌙', '✨', '🎆', '🔮', '💫', '🌈'];
-const LABELS = ['Sunsets', 'Ocean', 'Mountains', 'Forests', 'Florals', 'Wildlife', 'Night', 'Abstract', 'Cityscapes', 'Mystic', 'Cosmos', 'Color'];
-
-function Gallery() {
-  return (
-    <section style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 24px' }}>
-      <Reveal direction="up">
-        <div style={{ textAlign: 'center', marginBottom: 64 }}>
-          <p style={{ color: '#a855f7', fontSize: 12, fontWeight: 700, letterSpacing: 3, marginBottom: 12 }}>EXPLORE</p>
-          <h2 style={{ fontSize: 'clamp(32px,5vw,52px)', fontWeight: 800, background: 'linear-gradient(90deg,#a855f7,#ec4899)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: 0 }}>
-            Gallery Preview
-          </h2>
-        </div>
-      </Reveal>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 16, maxWidth: 1100, width: '100%' }}>
-        {EMOJIS.map((emoji, i) => (
-          <Reveal key={i} delay={i * 0.05} direction="scale">
-            <div
-              style={{
-                aspectRatio: '1', borderRadius: 16,
-                background: `linear-gradient(135deg, rgba(${i % 2 ? '168,85,247' : '0,212,255'},0.12), rgba(236,72,153,0.1))`,
-                backdropFilter: 'blur(8px)',
-                border: '1px solid rgba(168,85,247,0.2)',
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
-                cursor: 'pointer', transition: 'transform 0.3s, border-color 0.3s, box-shadow 0.3s',
-                overflow: 'hidden',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.06)'; e.currentTarget.style.borderColor = 'rgba(168,85,247,0.6)'; e.currentTarget.style.boxShadow = '0 16px 48px rgba(168,85,247,0.2)'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.borderColor = 'rgba(168,85,247,0.2)'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              <span style={{ fontSize: 44, display: 'block', transition: 'transform 0.3s' }}>{emoji}</span>
-              <span style={{ color: 'rgba(200,180,255,0.6)', fontSize: 12, fontWeight: 500 }}>{LABELS[i]}</span>
+      <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(290px,1fr))',gap:24,maxWidth:1100,width:'100%' }}>
+        {FEATURES.map((f,i)=>(
+          <Card3D key={i} intensity={12} style={{ borderRadius:20 }}>
+            <div style={{ padding:34,borderRadius:20,background:theme.surface,backdropFilter:'blur(16px)',border:`1px solid ${theme.border}`,height:'100%' }}>
+              <div style={{ fontSize:44,marginBottom:18,display:'inline-block',filter:`drop-shadow(0 4px 12px ${theme.glow})` }}>{f.icon}</div>
+              <h3 style={{ color:theme.accent,fontWeight:700,fontSize:18,marginBottom:10 }}>{f.title}</h3>
+              <p style={{ color:theme.textDim,lineHeight:1.75,fontSize:14 }}>{f.desc}</p>
             </div>
-          </Reveal>
+          </Card3D>
         ))}
       </div>
     </section>
@@ -414,75 +646,191 @@ function Gallery() {
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 const STATS = [
-  { raw: '10B+', label: 'Images Indexed' },
-  { raw: '180+', label: 'Countries' },
-  { raw: '<100ms', label: 'Search Speed' },
-  { raw: '99.9%', label: 'Uptime' },
+  { value:'10B+', label:'Images Indexed' },
+  { value:'180+', label:'Countries' },
+  { value:'<100ms', label:'Search Speed' },
+  { value:'99.9%', label:'Uptime' },
 ];
 
 function Stats() {
+  const theme = useTheme();
   return (
-    <section style={{ minHeight: '50vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 24px' }}>
-      <Reveal direction="up">
-        <div style={{ textAlign: 'center', marginBottom: 64 }}>
-          <p style={{ color: '#00d4ff', fontSize: 12, fontWeight: 700, letterSpacing: 3, marginBottom: 12 }}>SCALE</p>
-          <h2 style={{ fontSize: 'clamp(32px,5vw,52px)', fontWeight: 800, background: 'linear-gradient(90deg,#00d4ff,#3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: 0 }}>
-            By The Numbers
-          </h2>
-        </div>
-      </Reveal>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 24, maxWidth: 900, width: '100%' }}>
-        {STATS.map((s, i) => (
-          <Reveal key={i} delay={i * 0.1} direction="scale">
-            <div style={{ textAlign: 'center', padding: '40px 24px', borderRadius: 20, background: 'rgba(15,23,60,0.5)', backdropFilter: 'blur(12px)', border: '1px solid rgba(0,212,255,0.18)' }}>
-              <div style={{ fontSize: 'clamp(38px,6vw,56px)', fontWeight: 900, background: 'linear-gradient(135deg,#00d4ff,#3b82f6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', marginBottom: 8 }}>
-                <Counter target={s.raw} />
-              </div>
-              <p style={{ color: 'rgba(160,185,220,0.7)', fontSize: 15, fontWeight: 500 }}>{s.label}</p>
+    <section style={{ minHeight:'55vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'90px 24px' }}>
+      <div style={{ textAlign:'center',marginBottom:60 }}>
+        <p style={{ color:theme.accent,fontSize:12,fontWeight:700,letterSpacing:3,marginBottom:12 }}>SCALE</p>
+        <h2 style={{ fontSize:'clamp(32px,5vw,52px)',fontWeight:800,margin:0 }}>
+          <AnimatedText text="By The Numbers" style={{ background:`linear-gradient(90deg,${theme.accent},${theme.accent2})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }} />
+        </h2>
+      </div>
+      <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:24,maxWidth:900,width:'100%' }}>
+        {STATS.map((s,i)=>(
+          <Card3D key={i} intensity={14} style={{ borderRadius:20 }}>
+            <div style={{ textAlign:'center',padding:'44px 24px',borderRadius:20,background:theme.surface,backdropFilter:'blur(14px)',border:`1px solid ${theme.border}` }}>
+              <div style={{ fontSize:'clamp(38px,6vw,56px)',fontWeight:900,background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',marginBottom:10,letterSpacing:-1 }}>{s.value}</div>
+              <p style={{ color:theme.textDim,fontSize:15,fontWeight:500 }}>{s.label}</p>
             </div>
-          </Reveal>
+          </Card3D>
         ))}
       </div>
     </section>
   );
 }
 
+// ─── Pricing ──────────────────────────────────────────────────────────────────
+const PLANS = [
+  {
+    name:'Free', price:'$0', period:'forever',
+    desc:'Perfect for casual explorers and hobbyists.',
+    badge:null,
+    features:['100 searches / month','Standard resolution downloads','Basic AI filters','Community support','5 saved collections'],
+    cta:'Try Free', popular:false,
+  },
+  {
+    name:'Pro', price:'$12', period:'per month',
+    desc:'For creators who need speed and depth every day.',
+    badge:'Most Popular',
+    features:['Unlimited searches','4K resolution downloads','Advanced AI recognition','Priority support','Unlimited collections','API access (1k calls/mo)','No watermarks'],
+    cta:'Start Free Trial', popular:true,
+  },
+  {
+    name:'Enterprise', price:'$49', period:'per month',
+    desc:'Scale with your team — custom quotas and SLA.',
+    badge:null,
+    features:['Everything in Pro','Unlimited API access','Custom AI model training','Dedicated account manager','SSO & team management','SLA 99.99% uptime','White-label options'],
+    cta:'Contact Sales', popular:false,
+  },
+];
+
+function Pricing() {
+  const theme = useTheme();
+  const [annual, setAnnual] = useState(false);
+  return (
+    <section id="pricing" style={{ minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'100px 24px' }}>
+      <div style={{ textAlign:'center',marginBottom:20 }}>
+        <p style={{ color:theme.accent,fontSize:12,fontWeight:700,letterSpacing:3,marginBottom:12 }}>PRICING</p>
+        <h2 style={{ fontSize:'clamp(32px,5vw,52px)',fontWeight:800,margin:'0 0 16px' }}>
+          <AnimatedText text="Simple, Transparent Pricing" style={{ background:`linear-gradient(90deg,${theme.accent},${theme.accent2})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }} />
+        </h2>
+        <p style={{ color:theme.textDim,fontSize:15,maxWidth:460,margin:'0 auto 32px',lineHeight:1.7 }}>
+          No hidden fees. Cancel anytime. Start free and scale when you're ready.
+        </p>
+
+        <div style={{ display:'inline-flex',alignItems:'center',gap:12,padding:'6px 8px',borderRadius:50,background:theme.surface,border:`1px solid ${theme.border}` }}>
+          <span style={{ fontSize:13,color: !annual?theme.accent:theme.textFaint,fontWeight:600,cursor:'pointer',padding:'4px 14px',borderRadius:50,background:!annual?`${theme.accent}1f`:'transparent',transition:'all 0.25s' }}
+            onClick={()=>setAnnual(false)}>Monthly</span>
+          <span style={{ fontSize:13,color:annual?theme.accent:theme.textFaint,fontWeight:600,cursor:'pointer',padding:'4px 14px',borderRadius:50,background:annual?`${theme.accent}1f`:'transparent',transition:'all 0.25s' }}
+            onClick={()=>setAnnual(true)}>
+            Annual
+            <span style={{ marginLeft:6,fontSize:10,background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',fontWeight:800 }}>SAVE 25%</span>
+          </span>
+        </div>
+      </div>
+
+      <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(290px,1fr))',gap:24,maxWidth:1050,width:'100%',marginTop:48,alignItems:'stretch' }}>
+        {PLANS.map((plan,i)=>{
+          const price = annual && plan.price!=='$0'
+            ? `$${Math.round(parseInt(plan.price.replace('$',''))*0.75)}`
+            : plan.price;
+          return (
+            <Card3D key={i} intensity={11} style={{ borderRadius:24 }}>
+              <div style={{
+                position:'relative', padding:'36px 32px', borderRadius:24,
+                background: plan.popular ? theme.surfaceStrong : theme.surface,
+                backdropFilter:'blur(18px)',
+                border: plan.popular ? `1.5px solid ${theme.accent}88` : `1px solid ${theme.border}`,
+                boxShadow: plan.popular ? `0 0 60px ${theme.glow}` : 'none',
+                height:'100%',display:'flex',flexDirection:'column',
+              }}>
+                {plan.badge && (
+                  <div style={{
+                    position:'absolute',top:-14,left:'50%',transform:'translateX(-50%)',
+                    padding:'5px 20px',borderRadius:50,
+                    background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`,
+                    color:'#fff',fontSize:11,fontWeight:800,letterSpacing:1,whiteSpace:'nowrap',
+                    boxShadow:`0 0 24px ${theme.glow}`,
+                  }}>{plan.badge}</div>
+                )}
+
+                <div style={{ marginBottom:8 }}>
+                  <span style={{ fontSize:13,fontWeight:700,letterSpacing:2,color:theme.accent }}>{plan.name.toUpperCase()}</span>
+                </div>
+
+                <div style={{ display:'flex',alignItems:'baseline',gap:4,marginBottom:6 }}>
+                  <span style={{ fontSize:'clamp(42px,7vw,58px)',fontWeight:900,background:`linear-gradient(135deg,${theme.accent},${theme.text})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',letterSpacing:-2 }}>{price}</span>
+                  <span style={{ color:theme.textFaint,fontSize:14 }}>/{plan.period}</span>
+                </div>
+
+                <p style={{ color:theme.textDim,fontSize:13,lineHeight:1.6,marginBottom:28 }}>{plan.desc}</p>
+
+                <div style={{ height:1,background:`linear-gradient(90deg,transparent,${theme.accent}33,transparent)`,marginBottom:24 }}/>
+
+                <ul style={{ listStyle:'none',padding:0,margin:'0 0 32px',display:'flex',flexDirection:'column',gap:12,flex:1 }}>
+                  {plan.features.map((feat,j)=>(
+                    <li key={j} style={{ display:'flex',alignItems:'center',gap:10,fontSize:13,color:theme.textDim }}>
+                      <span style={{ width:18,height:18,borderRadius:'50%',background:`${theme.accent}22`,border:`1px solid ${theme.accent}55`,display:'inline-flex',alignItems:'center',justifyContent:'center',flexShrink:0 }}>
+                        <span style={{ color:theme.accent,fontSize:10,fontWeight:900 }}>✓</span>
+                      </span>
+                      {feat}
+                    </li>
+                  ))}
+                </ul>
+
+                <button style={{
+                  width:'100%',padding:'14px 0',borderRadius:12,fontWeight:800,fontSize:15,cursor:'pointer',
+                  background: plan.popular ? `linear-gradient(135deg,${theme.accent},${theme.accent2})` : 'transparent',
+                  border: plan.popular ? 'none' : `1.5px solid ${theme.accent}55`,
+                  color: plan.popular ? '#fff' : theme.accent,
+                  boxShadow: plan.popular ? `0 0 36px ${theme.glow}` : 'none',
+                  transition:'all 0.22s ease',
+                }}
+                  onMouseEnter={e=>{e.currentTarget.style.transform='scale(1.03)';e.currentTarget.style.boxShadow=`0 0 52px ${theme.glow}`;}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform='scale(1)';e.currentTarget.style.boxShadow=plan.popular?`0 0 36px ${theme.glow}`:'none';}}
+                >{plan.cta}</button>
+              </div>
+            </Card3D>
+          );
+        })}
+      </div>
+
+      <p style={{ color:theme.textFaint,fontSize:12,marginTop:36,textAlign:'center' }}>
+        All plans include 14-day free trial · No credit card required · Cancel anytime
+      </p>
+    </section>
+  );
+}
+
 // ─── Testimonials ─────────────────────────────────────────────────────────────
 const TESTIMONIALS = [
-  { text: 'AetherPix completely changed how I source images for my clients. The AI filters are insanely precise.', name: 'Mia Tanaka', role: 'Creative Director' },
-  { text: 'The speed is unreal. I went from spending hours to finding the perfect shot in seconds.', name: 'Arjun Mehta', role: 'Photojournalist' },
-  { text: 'Finally a search engine that understands visual context, not just keywords.', name: 'Sofia Reyes', role: 'UX Designer' },
+  { text:'AetherPix completely changed how I source images for my clients. The AI filters are insanely precise.', name:'Mia Tanaka', role:'Creative Director' },
+  { text:'The speed is unreal. I went from spending hours to finding the perfect shot in seconds.', name:'Arjun Mehta', role:'Photojournalist' },
+  { text:'Finally a search engine that understands visual context, not just keywords.', name:'Sofia Reyes', role:'UX Designer' },
 ];
 
 function Testimonials() {
+  const theme = useTheme();
   return (
-    <section style={{ minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 24px' }}>
-      <Reveal direction="up">
-        <div style={{ textAlign: 'center', marginBottom: 64 }}>
-          <p style={{ color: '#a855f7', fontSize: 12, fontWeight: 700, letterSpacing: 3, marginBottom: 12 }}>LOVE LETTERS</p>
-          <h2 style={{ fontSize: 'clamp(32px,5vw,52px)', fontWeight: 800, background: 'linear-gradient(90deg,#a855f7,#ec4899)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', margin: 0 }}>
-            What Creators Say
-          </h2>
-        </div>
-      </Reveal>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 24, maxWidth: 1000, width: '100%' }}>
-        {TESTIMONIALS.map((t, i) => (
-          <Reveal key={i} delay={i * 0.12} direction={i % 2 === 0 ? 'left' : 'right'}>
-            <div style={{ padding: 32, borderRadius: 20, background: 'rgba(15,10,40,0.6)', backdropFilter: 'blur(12px)', border: '1px solid rgba(168,85,247,0.2)' }}>
-              <p style={{ color: 'rgba(200,180,255,0.85)', lineHeight: 1.8, fontSize: 15, marginBottom: 24 }}>"{t.text}"</p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'linear-gradient(135deg,#a855f7,#ec4899)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: '#fff', fontSize: 16 }}>
-                  {t.name[0]}
-                </div>
+    <section style={{ minHeight:'60vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'90px 24px' }}>
+      <div style={{ textAlign:'center',marginBottom:60 }}>
+        <p style={{ color:theme.accent,fontSize:12,fontWeight:700,letterSpacing:3,marginBottom:12 }}>LOVE LETTERS</p>
+        <h2 style={{ fontSize:'clamp(32px,5vw,52px)',fontWeight:800,margin:0 }}>
+          <AnimatedText text="What Creators Say" style={{ background:`linear-gradient(90deg,${theme.accent},${theme.text})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }} />
+        </h2>
+      </div>
+      <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(290px,1fr))',gap:24,maxWidth:1000,width:'100%' }}>
+        {TESTIMONIALS.map((t,i)=>(
+          <Card3D key={i} intensity={11} style={{ borderRadius:20 }}>
+            <div style={{ padding:34,borderRadius:20,background:theme.surface,backdropFilter:'blur(16px)',border:`1px solid ${theme.border}`,height:'100%' }}>
+              <div style={{ fontSize:48,color:`${theme.accent}33`,lineHeight:0.8,marginBottom:14,fontFamily:'Georgia,serif' }}>"</div>
+              <p style={{ color:theme.textDim,lineHeight:1.8,fontSize:15,marginBottom:24 }}>{t.text}</p>
+              <div style={{ display:'flex',alignItems:'center',gap:12 }}>
+                <div style={{ width:44,height:44,borderRadius:'50%',background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,color:'#fff',fontSize:17,boxShadow:`0 0 18px ${theme.glow}` }}>{t.name[0]}</div>
                 <div>
-                  <p style={{ color: '#e0d0ff', fontWeight: 700, fontSize: 14, margin: 0 }}>{t.name}</p>
-                  <p style={{ color: 'rgba(160,140,200,0.6)', fontSize: 12, margin: '2px 0 0' }}>{t.role}</p>
+                  <p style={{ color:theme.text,fontWeight:700,fontSize:14,margin:0 }}>{t.name}</p>
+                  <p style={{ color:theme.textFaint,fontSize:12,margin:'3px 0 0' }}>{t.role}</p>
                 </div>
               </div>
             </div>
-          </Reveal>
+          </Card3D>
         ))}
       </div>
     </section>
@@ -491,101 +839,99 @@ function Testimonials() {
 
 // ─── CTA ──────────────────────────────────────────────────────────────────────
 function CTA() {
+  const theme = useTheme();
   return (
-    <section style={{ minHeight: '60vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '100px 24px', textAlign: 'center' }}>
-      <Reveal direction="scale">
-        <div style={{ maxWidth: 700 }}>
-          <h2 style={{ fontSize: 'clamp(36px,6vw,72px)', fontWeight: 900, lineHeight: 1.1, marginBottom: 20, background: 'linear-gradient(135deg,#00d4ff,#3b82f6,#a855f7)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            Ready to Explore?
+    <section style={{ minHeight:'60vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'100px 24px',textAlign:'center' }}>
+      <Card3D intensity={7} style={{ borderRadius:28,maxWidth:720,width:'100%',margin:'0 auto' }}>
+        <div style={{ padding:'72px 56px',borderRadius:28,background:theme.surfaceStrong,backdropFilter:'blur(24px)',border:`1px solid ${theme.border}`,boxShadow:`0 0 80px ${theme.glow}` }}>
+          <h2 style={{ fontSize:'clamp(36px,6vw,68px)',fontWeight:900,lineHeight:1.08,marginBottom:20 }}>
+            <AnimatedText text="Ready to Explore?" style={{ background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }} />
           </h2>
-          <p style={{ color: 'rgba(160,185,220,0.7)', fontSize: 18, lineHeight: 1.7, marginBottom: 48 }}>
-            Join millions of creators discovering the perfect image with AetherPix — no credit card, instant access.
+          <p style={{ color:theme.textDim,fontSize:17,lineHeight:1.75,marginBottom:48,maxWidth:480,margin:'0 auto 48px' }}>
+            Join millions of creators discovering the perfect image — no credit card, instant access.
           </p>
-          <div style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button style={{ padding: '16px 44px', background: 'linear-gradient(135deg,#00d4ff,#3b82f6)', border: 'none', borderRadius: 12, color: '#fff', fontWeight: 800, fontSize: 16, cursor: 'pointer', boxShadow: '0 0 48px rgba(0,212,255,0.35)', transition: 'transform 0.2s,box-shadow 0.2s' }}
-              onMouseEnter={e => { e.target.style.transform = 'scale(1.05)'; e.target.style.boxShadow = '0 0 64px rgba(0,212,255,0.55)'; }}
-              onMouseLeave={e => { e.target.style.transform = 'none'; e.target.style.boxShadow = '0 0 48px rgba(0,212,255,0.35)'; }}
-            >Get Started Free</button>
-            <button style={{ padding: '16px 44px', background: 'transparent', border: '2px solid rgba(0,212,255,0.4)', borderRadius: 12, color: '#00d4ff', fontWeight: 700, fontSize: 16, cursor: 'pointer', transition: 'background 0.2s,border-color 0.2s' }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,212,255,0.08)'; e.currentTarget.style.borderColor = 'rgba(0,212,255,0.7)'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(0,212,255,0.4)'; }}
-            >View Pricing</button>
+          <div style={{ display:'flex',gap:16,justifyContent:'center',flexWrap:'wrap' }}>
+            <button style={{
+              padding:'16px 46px',background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`,border:'none',borderRadius:12,
+              color:'#fff',fontWeight:800,fontSize:16,cursor:'pointer',boxShadow:`0 0 48px ${theme.glow}`,transition:'transform 0.2s, box-shadow 0.2s',
+            }}
+              onMouseEnter={e=>{e.target.style.transform='scale(1.06) translateY(-2px)';e.target.style.boxShadow=`0 0 70px ${theme.glow}`;}}
+              onMouseLeave={e=>{e.target.style.transform='scale(1)';e.target.style.boxShadow=`0 0 48px ${theme.glow}`;}}
+            >Try Free</button>
+            <a href="#pricing" style={{
+              padding:'16px 46px',background:'transparent',border:`2px solid ${theme.borderStrong}`,borderRadius:12,
+              color:theme.accent,fontWeight:700,fontSize:16,cursor:'pointer',transition:'background 0.2s, border-color 0.2s, transform 0.2s',textDecoration:'none',display:'inline-block',
+            }}
+              onMouseEnter={e=>{e.currentTarget.style.background=`${theme.accent}19`;e.currentTarget.style.transform='scale(1.04)';}}
+              onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.transform='scale(1)';}}
+            >View Pricing</a>
           </div>
         </div>
-      </Reveal>
+      </Card3D>
     </section>
   );
 }
 
 // ─── Footer ───────────────────────────────────────────────────────────────────
-const FOOTER_COLS = [
-  { title: 'Product', links: ['Features', 'Pricing', 'Security'] },
-  { title: 'Company', links: ['About', 'Blog', 'Careers'] },
-  { title: 'Resources', links: ['Documentation', 'API', 'Community'] },
-  { title: 'Legal', links: ['Privacy', 'Terms', 'Contact'] },
-];
-
 function Footer() {
+  const theme = useTheme();
   return (
-    <footer style={{ background: 'rgba(6,8,24,0.9)', backdropFilter: 'blur(20px)', borderTop: '1px solid rgba(0,212,255,0.1)', padding: '60px 40px 32px' }}>
-      <Reveal direction="up">
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 40, marginBottom: 48 }}>
-            {FOOTER_COLS.map((col, i) => (
-              <div key={i}>
-                <h4 style={{ color: '#00d4ff', fontWeight: 700, marginBottom: 16, fontSize: 14, letterSpacing: 1 }}>{col.title}</h4>
-                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {col.links.map((link, j) => (
-                    <li key={j}><a href="#" style={{ color: 'rgba(140,160,190,0.6)', textDecoration: 'none', fontSize: 14, transition: 'color 0.2s' }}
-                      onMouseEnter={e => (e.target.style.color = '#00d4ff')}
-                      onMouseLeave={e => (e.target.style.color = 'rgba(140,160,190,0.6)')}
-                    >{link}</a></li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-          <div style={{ borderTop: '1px solid rgba(0,212,255,0.08)', paddingTop: 24, textAlign: 'center', color: 'rgba(100,120,150,0.5)', fontSize: 13 }}>
-            © 2024 AetherPix. All rights reserved. | Crafted with ✨
-          </div>
+    <footer style={{ background:theme.surfaceStrong,backdropFilter:'blur(24px)',borderTop:`1px solid ${theme.border}`,padding:'64px 48px 32px' }}>
+      <div style={{ maxWidth:1100,margin:'0 auto' }}>
+        <div style={{ marginBottom:60 }}>
+            <div style={{marginLeft:"20vh" ,color:"gray"}}>
+         <span style={{fontSize:"29vh"}}>Aether</span><span style={{fontSize:"24vh"}}>Pix</span>
+         </div>
         </div>
-      </Reveal>
+
+        <div style={{ borderTop:`1px solid ${theme.border}`,paddingTop:24,textAlign:'center',color:theme.textFaint,fontSize:12 }}>
+          © 2025 AetherPix. All rights reserved. · Crafted with ✨ · Image data via Openverse (CC-licensed open images)
+        </div>
+      </div>
     </footer>
   );
 }
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 export default function AetherPix() {
+  const [mode, setMode] = useState('dark');
+  const theme = { ...THEMES[mode], toggle: () => setMode(m => m === 'dark' ? 'light' : 'dark') };
+
   return (
-    <div style={{ background: 'linear-gradient(160deg,#040813 0%,#080e2e 40%,#0c0820 70%,#040813 100%)', minHeight: '100vh', color: '#fff', fontFamily: "'Inter','Segoe UI',sans-serif", overflowX: 'hidden' }}>
-      {/* Ambient glow blobs */}
-      <div style={{ position: 'fixed', top: '10%', left: '15%', width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle,rgba(0,212,255,0.06) 0%,transparent 70%)', pointerEvents: 'none', zIndex: 0 }} />
-      <div style={{ position: 'fixed', bottom: '20%', right: '10%', width: 500, height: 500, borderRadius: '50%', background: 'radial-gradient(circle,rgba(168,85,247,0.07) 0%,transparent 70%)', pointerEvents: 'none', zIndex: 0 }} />
+    <ThemeContext.Provider value={theme}>
+      <div style={{
+        background: theme.pageBg,
+        minHeight:'100vh', color: theme.text,
+        fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",
+        overflowX:'hidden',
+        transition:'background 0.5s ease, color 0.5s ease',
+      }}>
+        <div style={{ position:'fixed',top:'8%',left:'12%',width:700,height:700,borderRadius:'50%',background:`radial-gradient(circle,${theme.glow} 0%,transparent 70%)`,opacity:0.5,pointerEvents:'none',zIndex:0 }}/>
+        <div style={{ position:'fixed',bottom:'18%',right:'8%',width:550,height:550,borderRadius:'50%',background:`radial-gradient(circle,${theme.glow} 0%,transparent 70%)`,opacity:0.4,pointerEvents:'none',zIndex:0 }}/>
+        <div style={{ position:'fixed',top:'55%',left:'50%',width:400,height:400,borderRadius:'50%',background:`radial-gradient(circle,${theme.glow} 0%,transparent 70%)`,opacity:0.3,transform:'translate(-50%,-50%)',pointerEvents:'none',zIndex:0 }}/>
 
-      <ParticleCanvas />
-      <Navbar />
+        <ThreeCanvas />
+        <Navbar />
 
-      <div style={{ position: 'relative', zIndex: 10 }}>
-        <Hero />
-        <Features />
-        <Gallery />
-        <Stats />
-        <Testimonials />
-        <CTA />
-        <Footer />
+        <div style={{ position:'relative',zIndex:10 }}>
+          <Hero />
+          <Features />
+          <Stats />
+          <Pricing />
+          <Testimonials />
+          <CTA />
+          <Footer />
+        </div>
+
+        <style>{`
+          * { box-sizing:border-box; margin:0; padding:0; }
+          html { scroll-behavior:smooth; }
+          ::-webkit-scrollbar { width:7px; }
+          ::-webkit-scrollbar-track { background:${theme.mode==='dark'?'rgba(2,3,10,0.8)':'rgba(240,244,255,0.8)'}; }
+          ::-webkit-scrollbar-thumb { background:linear-gradient(180deg,${theme.accent},${theme.accent2}); border-radius:4px; }
+          @media (prefers-reduced-motion:reduce) { * { transition:none !important; animation:none !important; } }
+        `}</style>
       </div>
-
-      <style>{`
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        html { scroll-behavior: smooth; }
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: rgba(4,8,20,0.8); }
-        ::-webkit-scrollbar-thumb { background: linear-gradient(180deg,#00d4ff,#3b82f6); border-radius: 4px; }
-        @keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
-        @media (prefers-reduced-motion: reduce) {
-          * { transition: none !important; animation: none !important; }
-        }
-      `}</style>
-    </div>
+    </ThemeContext.Provider>
   );
 }
