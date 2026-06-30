@@ -35,10 +35,34 @@ const THEMES = {
   },
 };
 
-// ─── Real image search ──────────────────────────────────────────────────────
-// Uses the Openverse API (api.openverse.org) — free, public, no API key required.
-// It indexes hundreds of millions of openly-licensed images from across the web.
-async function searchImages(query, pageSize = 12) {
+// ─── Image search: Google Custom Search JSON API (preferred) ──────────────
+// Google's Custom Search API requires a free API key + a Programmable Search
+// Engine ID (cx) configured for image search. Get them at:
+//   https://developers.google.com/custom-search/v1/overview
+//   https://programmablesearchengine.google.com/  (create engine, turn on "Image search")
+// If no key/cx is supplied, we transparently fall back to Openverse
+// (api.openverse.org), a free public open-image index that needs no key.
+async function searchGoogleImages(query, apiKey, cx, count = 12) {
+  const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(apiKey)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(query)}&searchType=image&num=${Math.min(count, 10)}&safe=active`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error?.message || `Google search failed (${res.status})`);
+  }
+  const data = await res.json();
+  return (data.items || []).map((r, i) => ({
+    id: `g-${i}-${r.link}`,
+    url: r.image?.thumbnailLink || r.link,
+    fullUrl: r.link,
+    title: r.title || query,
+    creator: r.displayLink || 'Google',
+    source: 'Google',
+    license: '',
+    link: r.image?.contextLink || r.link,
+  }));
+}
+
+async function searchOpenverse(query, pageSize = 12) {
   const url = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}&page_size=${pageSize}&mature=false`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Search failed (${res.status})`);
@@ -55,7 +79,40 @@ async function searchImages(query, pageSize = 12) {
   }));
 }
 
-// ─── Scroll-animated Letter-by-Letter Text ────────────────────────────────────
+async function searchImages(query, { apiKey, cx, pageSize = 12 } = {}) {
+  if (apiKey && cx) {
+    try {
+      return await searchGoogleImages(query, apiKey, cx, pageSize);
+    } catch (e) {
+      // fall through to Openverse if Google fails (bad key, quota, etc.)
+      console.warn('Google Custom Search failed, falling back to Openverse:', e.message);
+    }
+  }
+  return searchOpenverse(query, pageSize);
+}
+
+// ─── Download helper ────────────────────────────────────────────────────────
+async function downloadImage(img) {
+  const src = img.fullUrl || img.url;
+  try {
+    const res = await fetch(src, { mode: 'cors' });
+    const blob = await res.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ext = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+    a.href = objUrl;
+    a.download = `${(img.title || 'aetherpix-image').replace(/[^a-z0-9-_]+/gi, '_').slice(0, 60)}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+  } catch (e) {
+    // CORS-restricted sources: fall back to opening the image in a new tab
+    window.open(src, '_blank', 'noopener,noreferrer');
+  }
+}
+
+// ─── Fully 3D, scroll-animated, letter-by-letter text ──────────────────────
 function AnimatedText({ text, style = {}, as: Tag = 'span', delay = 0 }) {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
@@ -72,16 +129,27 @@ function AnimatedText({ text, style = {}, as: Tag = 'span', delay = 0 }) {
   }, []);
 
   return (
-    <Tag ref={ref} style={{ display: 'inline', ...style }}>
+    <Tag ref={ref} style={{ display: 'inline-block', perspective: 700, ...style }}>
       {text.split('').map((char, i) => (
         <span
           key={i}
           style={{
             display: 'inline-block',
+            transformStyle: 'preserve-3d',
             opacity: visible ? 1 : 0,
-            transform: visible ? 'translateY(0px)' : 'translateY(24px)',
-            transition: `opacity 0.45s ease ${delay + i * 0.028}s, transform 0.45s ease ${delay + i * 0.028}s`,
+            transform: visible
+              ? 'translateZ(0px) translateY(0px) rotateX(0deg) rotateY(0deg)'
+              : 'translateZ(-160px) translateY(28px) rotateX(-95deg) rotateY(35deg)',
+            transition: `opacity 0.5s ease ${delay + i * 0.03}s, transform 0.6s cubic-bezier(.2,.7,.3,1.3) ${delay + i * 0.03}s`,
             whiteSpace: char === ' ' ? 'pre' : 'normal',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transition = 'transform 0.25s ease';
+            e.currentTarget.style.transform = 'translateZ(14px) rotateX(-12deg) rotateY(10deg) scale(1.15)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transition = 'transform 0.25s ease';
+            e.currentTarget.style.transform = 'translateZ(0px) translateY(0px) rotateX(0deg) rotateY(0deg)';
           }}
         >
           {char}
@@ -351,9 +419,61 @@ function EngineMarquee() {
   );
 }
 
-// ─── Live Image Search Result Grid ─────────────────────────────────────────
+// ─── API settings panel (Google Custom Search key + cx) ────────────────────
+function ApiSettings({ apiKey, cx, setApiKey, setCx, usingGoogle, onSave }) {
+  const theme = useTheme();
+  const [open, setOpen] = useState(false);
+  const [localKey, setLocalKey] = useState(apiKey);
+  const [localCx, setLocalCx] = useState(cx);
+
+  return (
+    <div style={{ width:'100%', maxWidth:640, marginBottom:18 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          background:'transparent', border:'none', cursor:'pointer',
+          color: usingGoogle ? theme.accent : theme.textFaint, fontSize:12, fontWeight:600,
+          display:'flex', alignItems:'center', gap:6, margin:'0 auto',
+        }}
+      >
+        <span style={{ width:6,height:6,borderRadius:'50%', background: usingGoogle ? theme.accent : theme.textFaint, boxShadow: usingGoogle ? `0 0 8px ${theme.accent}`:'none' }} />
+        {usingGoogle ? 'Using Google Custom Search API' : 'Using free Openverse fallback'} · {open ? 'hide' : 'configure Google API'}
+      </button>
+      {open && (
+        <div style={{
+          marginTop:12, padding:18, borderRadius:14, background:theme.surface, backdropFilter:'blur(16px)',
+          border:`1px solid ${theme.border}`, display:'flex', flexDirection:'column', gap:10, textAlign:'left',
+        }}>
+          <p style={{ fontSize:12, color:theme.textFaint, lineHeight:1.6 }}>
+            Plug in a Google Custom Search JSON API key + Search Engine ID (with Image Search enabled) for real Google image results. Get them from the Google Cloud Console and Programmable Search Engine. Without these, AetherPix automatically uses the free Openverse open-image index.
+          </p>
+          <input
+            type="text" placeholder="Google API key"
+            value={localKey} onChange={e=>setLocalKey(e.target.value)}
+            style={{ padding:'10px 14px', borderRadius:8, border:`1px solid ${theme.border}`, background:'transparent', color:theme.text, fontSize:13, outline:'none' }}
+          />
+          <input
+            type="text" placeholder="Search Engine ID (cx)"
+            value={localCx} onChange={e=>setLocalCx(e.target.value)}
+            style={{ padding:'10px 14px', borderRadius:8, border:`1px solid ${theme.border}`, background:'transparent', color:theme.text, fontSize:13, outline:'none' }}
+          />
+          <button
+            onClick={() => { setApiKey(localKey); setCx(localCx); onSave(); setOpen(false); }}
+            style={{
+              padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontWeight:700, fontSize:13,
+              background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`, color:'#fff',
+            }}
+          >Save & search with Google</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Live Image Search Result Grid (with download) ─────────────────────────
 function ImageGrid({ images, loading, error }) {
   const [hovered, setHovered] = useState(null);
+  const [downloading, setDownloading] = useState(null);
   const theme = useTheme();
 
   if (error) {
@@ -390,6 +510,14 @@ function ImageGrid({ images, loading, error }) {
     );
   }
 
+  const handleDownload = async (e, img) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDownloading(img.id);
+    await downloadImage(img);
+    setDownloading(null);
+  };
+
   return (
     <div style={{
       display:'grid',
@@ -423,6 +551,25 @@ function ImageGrid({ images, loading, error }) {
             loading="lazy"
             style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }}
           />
+
+          <button
+            onClick={(e) => handleDownload(e, img)}
+            title="Download image"
+            style={{
+              position:'absolute', top:8, left:8,
+              width:26, height:26, borderRadius:'50%',
+              background: 'rgba(2,3,10,0.55)', backdropFilter:'blur(8px)',
+              border:'1px solid rgba(255,255,255,0.25)',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              cursor:'pointer', color:'#fff', fontSize:12,
+              opacity: hovered===img.id ? 1 : 0,
+              transform: hovered===img.id ? 'scale(1)' : 'scale(0.7)',
+              transition:'all 0.2s ease',
+            }}
+          >
+            {downloading===img.id ? '…' : '⬇'}
+          </button>
+
           <div style={{
             position:'absolute', bottom:0, left:0, right:0,
             padding:'24px 10px 8px',
@@ -475,6 +622,8 @@ function Hero() {
   const [error, setError] = useState(null);
   const [resultLabel, setResultLabel] = useState('TRENDING SEARCHES');
   const [elapsed, setElapsed] = useState(null);
+  const [apiKey, setApiKey] = useState('');
+  const [cx, setCx] = useState('');
   const debounceRef = useRef(null);
 
   const placeholders=['sunsets over mountains','neon city rain','abstract geometry','deep ocean life'];
@@ -490,13 +639,17 @@ function Hero() {
     return ()=>clearInterval(tick);
   },[]);
 
-  const runSearch = useCallback(async (q) => {
+  const runSearch = useCallback(async (q, keyOverride, cxOverride) => {
     const term = q.trim() || 'sunsets over mountains';
     setLoading(true);
     setError(null);
     const start = performance.now();
     try {
-      const results = await searchImages(term, 12);
+      const results = await searchImages(term, {
+        apiKey: keyOverride !== undefined ? keyOverride : apiKey,
+        cx: cxOverride !== undefined ? cxOverride : cx,
+        pageSize: 12,
+      });
       setImages(results);
       setResultLabel(q.trim() ? `RESULTS FOR "${q.trim().toUpperCase()}"` : 'TRENDING SEARCHES');
       setElapsed(((performance.now() - start) / 1000).toFixed(2));
@@ -505,7 +658,7 @@ function Hero() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [apiKey, cx]);
 
   // initial load
   useEffect(() => { runSearch(''); /* eslint-disable-next-line */ }, []);
@@ -533,20 +686,17 @@ function Hero() {
       </div>
 
       <h1 style={{ fontSize:'clamp(54px,9.5vw,108px)',fontWeight:900,lineHeight:1.0,letterSpacing:-3,margin:'0 0 22px' }}>
-        <AnimatedText
-          text="AetherPix"
-          style={{ background:`linear-gradient(135deg,${theme.accent} 0%,#0b3d91 60%,#001a40 100%)`,WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }}
-        />
+        AetherPix
       </h1>
 
       <p style={{ fontSize:'clamp(17px,2.4vw,24px)',color:theme.textDim,maxWidth:560,margin:'0 auto 10px',fontWeight:300,lineHeight:1.4 }}>
         <AnimatedText text="Search the infinite universe of images" delay={0.3} />
       </p>
-      <p style={{ fontSize:14,color:theme.textFaint,maxWidth:480,margin:'0 auto 40px',lineHeight:1.8 }}>
-        <AnimatedText text="Real images · live search · powered by the Openverse open image index" delay={0.6} />
+      <p style={{ fontSize:14,color:theme.textFaint,maxWidth:520,margin:'0 auto 28px',lineHeight:1.8 }}>
+        <AnimatedText text="Real images · live search · download anything you find" delay={0.6} />
       </p>
 
-      <form onSubmit={handleSubmit} style={{ width:'100%',maxWidth:640,marginBottom:8 }}>
+      <form onSubmit={handleSubmit} style={{ width:'100%',maxWidth:640,marginBottom:14 }}>
         <Card3D intensity={6} style={{ borderRadius:50 }}>
           <div style={{
             display:'flex',alignItems:'center',
@@ -575,6 +725,12 @@ function Hero() {
         </Card3D>
       </form>
 
+      <ApiSettings
+        apiKey={apiKey} cx={cx} setApiKey={setApiKey} setCx={setCx}
+        usingGoogle={Boolean(apiKey && cx)}
+        onSave={() => runSearch(query)}
+      />
+
       <EngineMarquee />
 
       <div style={{ width:'100%',maxWidth:640,marginBottom:44, marginTop:20 }}>
@@ -585,6 +741,7 @@ function Hero() {
           </span>
         </div>
         <ImageGrid images={images} loading={loading} error={error} />
+        <p style={{ color:theme.textFaint, fontSize:11, marginTop:14 }}>Hover an image and tap ⬇ to download it.</p>
       </div>
 
       <div style={{ display:'flex',gap:16,flexWrap:'wrap',justifyContent:'center' }}>
@@ -614,8 +771,8 @@ const FEATURES = [
   { icon:'🎨', title:'AI Recognition', desc:'Advanced ML identifies objects, scenes, and styles in milliseconds.' },
   { icon:'⚡', title:'Lightning Fast', desc:'Search billions of images with real-time filters and instant results.' },
   { icon:'🎯', title:'Smart Filters', desc:'Filter by color, style, resolution, and custom AI-trained categories.' },
-  { icon:'🔐', title:'Privacy First', desc:'Your searches are encrypted end-to-end and never stored or sold.' },
-  { icon:'🌐', title:'Global Collection', desc:'Millions of royalty-free, licensed, and original images worldwide.' },
+  { icon:'⬇', title:'One-Tap Download', desc:'Save any image straight to your device in its original quality.' },
+  { icon:'🌐', title:'Google-Powered Search', desc:'Plug in your own Google Custom Search API key for true Google image results.' },
   { icon:'✨', title:'Curated Picks', desc:'Hand-picked galleries from top photographers and designers globally.' },
 ];
 
@@ -885,7 +1042,7 @@ function Footer() {
         </div>
 
         <div style={{ borderTop:`1px solid ${theme.border}`,paddingTop:24,textAlign:'center',color:theme.textFaint,fontSize:12 }}>
-          © 2025 AetherPix. All rights reserved. · Crafted with ✨ · Image data via Openverse (CC-licensed open images)
+          © 2025 AetherPix. All rights reserved. · Crafted with ✨ · Google Custom Search API (optional) or Openverse (CC-licensed open images)
         </div>
       </div>
     </footer>
