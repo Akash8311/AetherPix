@@ -18,6 +18,10 @@ const THEMES = {
     accent: '#1e90ff',
     accent2: '#0b3d91',
     glow: 'rgba(30,144,255,0.28)',
+    overlay: 'rgba(2,3,10,0.78)',
+    overlayBorder: 'rgba(255,255,255,0.18)',
+    scrollTrack: 'rgba(6,8,20,0.6)',
+    scrollThumb: 'rgba(150,165,200,0.35)',
   },
   light: {
     mode: 'light',
@@ -32,16 +36,14 @@ const THEMES = {
     accent: '#0b5fd6',
     accent2: '#001a40',
     glow: 'rgba(11,95,214,0.18)',
+    overlay: 'rgba(255,255,255,0.85)',
+    overlayBorder: 'rgba(10,30,70,0.15)',
+    scrollTrack: 'rgba(225,232,250,0.7)',
+    scrollThumb: 'rgba(70,90,140,0.32)',
   },
 };
 
 // ─── Image search: Google Custom Search JSON API (preferred) ──────────────
-// Google's Custom Search API requires a free API key + a Programmable Search
-// Engine ID (cx) configured for image search. Get them at:
-//   https://developers.google.com/custom-search/v1/overview
-//   https://programmablesearchengine.google.com/  (create engine, turn on "Image search")
-// If no key/cx is supplied, we transparently fall back to Openverse
-// (api.openverse.org), a free public open-image index that needs no key.
 async function searchGoogleImages(query, apiKey, cx, count = 12) {
   const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(apiKey)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(query)}&searchType=image&num=${Math.min(count, 10)}&safe=active`;
   const res = await fetch(url);
@@ -84,7 +86,6 @@ async function searchImages(query, { apiKey, cx, pageSize = 12 } = {}) {
     try {
       return await searchGoogleImages(query, apiKey, cx, pageSize);
     } catch (e) {
-      // fall through to Openverse if Google fails (bad key, quota, etc.)
       console.warn('Google Custom Search failed, falling back to Openverse:', e.message);
     }
   }
@@ -107,7 +108,6 @@ async function downloadImage(img) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
   } catch (e) {
-    // CORS-restricted sources: fall back to opening the image in a new tab
     window.open(src, '_blank', 'noopener,noreferrer');
   }
 }
@@ -188,7 +188,7 @@ function SlidingLogo({ size = 22 }) {
   );
 }
 
-// ─── 3D Rotating Cube Canvas ──────────────────────────────────────────────────
+// ─── 3D Rotating Cube Canvas (existing geometric layer) ────────────────────
 function ThreeCanvas() {
   const canvasRef = useRef(null);
   const animRef = useRef(null);
@@ -223,13 +223,13 @@ function ThreeCanvas() {
       drx: (Math.random()-.5)*.008, dry: (Math.random()-.5)*.01, drz: (Math.random()-.5)*.005,
       hue: 205, alpha: .12+Math.random()*.2,
     }));
-    const particles = Array.from({ length: 80 }, () => ({
+    const particles = Array.from({ length: 90 }, () => ({
       x: (Math.random()-.5)*1400, y: (Math.random()-.5)*900, z: (Math.random()-.5)*600-200,
       r: Math.random()*1.8+.4, vx: (Math.random()-.5)*.2, vy: (Math.random()-.5)*.2, vz: (Math.random()-.5)*.15,
-      hue: 205,
+      hue: 205, twinkle: Math.random()*Math.PI*2,
     }));
 
-    const draw = () => {
+    const draw = (t) => {
       ctx.clearRect(0,0,W,H);
       const cx=W/2, cy=H/2, FOV=600;
       const mx=mouseRef.current.x, my=mouseRef.current.y;
@@ -261,16 +261,63 @@ function ThreeCanvas() {
         let v=[p.x,p.y,p.z]; v=rotateX(v,gTX); v=rotateY(v,gTY);
         const pp=project(v[0],v[1],v[2],FOV,cx,cy);
         if(pp.scale<=0) return;
+        const tw = 0.6 + 0.4*Math.sin(t*0.0015 + p.twinkle);
         ctx.beginPath(); ctx.arc(pp.x,pp.y,p.r*pp.scale,0,Math.PI*2);
-        ctx.fillStyle=`hsla(${p.hue},100%,${isLight?40:72}%,${(isLight?0.22:0.35)*pp.scale})`; ctx.fill();
+        ctx.fillStyle=`hsla(${p.hue},100%,${isLight?40:72}%,${(isLight?0.22:0.35)*pp.scale*tw})`; ctx.fill();
       });
       animRef.current=requestAnimationFrame(draw);
     };
-    draw();
+    animRef.current = requestAnimationFrame(draw);
     return () => { cancelAnimationFrame(animRef.current); window.removeEventListener('resize',resize); window.removeEventListener('mousemove',onMouse); };
   }, [theme.mode]);
 
   return <canvas ref={canvasRef} style={{ position:'fixed',top:0,left:0,width:'100%',height:'100%',zIndex:0,pointerEvents:'none' }} />;
+}
+
+// ─── NEW: Aurora / nebula ambient backdrop ──────────────────────────────────
+// Soft drifting color-field blobs behind the cube/particle canvas, giving the
+// page a living "nebula" depth instead of a flat gradient. Pure CSS, GPU-cheap.
+function AuroraField() {
+  const theme = useTheme();
+  const isDark = theme.mode === 'dark';
+  const blobs = isDark
+    ? [
+        { c: 'rgba(30,144,255,0.30)', w: 620, h: 620, top: '-10%', left: '8%', dur: 26 },
+        { c: 'rgba(120,80,255,0.20)', w: 520, h: 520, top: '55%', left: '70%', dur: 32 },
+        { c: 'rgba(0,220,255,0.16)', w: 460, h: 460, top: '70%', left: '12%', dur: 22 },
+      ]
+    : [
+        { c: 'rgba(11,95,214,0.16)', w: 620, h: 620, top: '-10%', left: '8%', dur: 26 },
+        { c: 'rgba(140,110,255,0.12)', w: 520, h: 520, top: '55%', left: '70%', dur: 32 },
+        { c: 'rgba(0,170,210,0.10)', w: 460, h: 460, top: '70%', left: '12%', dur: 22 },
+      ];
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:0, overflow:'hidden', pointerEvents:'none' }}>
+      {blobs.map((b, i) => (
+        <div key={i} style={{
+          position:'absolute', top:b.top, left:b.left,
+          width:b.w, height:b.h, borderRadius:'50%',
+          background:`radial-gradient(circle,${b.c} 0%,transparent 70%)`,
+          filter:'blur(10px)',
+          animation:`auroraDrift${i} ${b.dur}s ease-in-out infinite`,
+          willChange:'transform',
+        }} />
+      ))}
+      <div style={{
+        position:'absolute', inset:0,
+        backgroundImage: isDark
+          ? 'radial-gradient(rgba(255,255,255,0.035) 1px, transparent 1px)'
+          : 'radial-gradient(rgba(10,30,70,0.05) 1px, transparent 1px)',
+        backgroundSize:'34px 34px',
+        opacity:0.5,
+      }} />
+      <style>{`
+        @keyframes auroraDrift0 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(60px,40px) scale(1.12); } }
+        @keyframes auroraDrift1 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-70px,-30px) scale(1.08); } }
+        @keyframes auroraDrift2 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(40px,-50px) scale(1.15); } }
+      `}</style>
+    </div>
+  );
 }
 
 // ─── 3D Card ──────────────────────────────────────────────────────────────────
@@ -388,11 +435,12 @@ const OTHER_ENGINES = [
 function EngineMarquee() {
   const theme = useTheme();
   const loopItems = [...OTHER_ENGINES, ...OTHER_ENGINES];
+  const edgeColor = theme.mode === 'dark' ? '#050a1f' : '#eef1fb';
   return (
     <div style={{ width:'100%', overflow:'hidden', padding:'18px 0', position:'relative' }}>
       <div style={{
         position:'absolute', inset:0, zIndex:2, pointerEvents:'none',
-        background:`linear-gradient(90deg, ${theme.mode==='dark'?'#02030a':'#f4f8ff'} 0%, transparent 8%, transparent 92%, ${theme.mode==='dark'?'#02030a':'#f4f8ff'} 100%)`,
+        background:`linear-gradient(90deg, ${edgeColor} 0%, transparent 8%, transparent 92%, ${edgeColor} 100%)`,
       }} />
       <div style={{
         display:'flex', gap:40, width:'max-content',
@@ -466,6 +514,30 @@ function ApiSettings({ apiKey, cx, setApiKey, setCx, usingGoogle, onSave }) {
           >Save & search with Google</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── NEW: Recent search history chips ───────────────────────────────────────
+function HistoryChips({ history, onPick }) {
+  const theme = useTheme();
+  if (!history || history.length === 0) return null;
+  return (
+    <div style={{ display:'flex', gap:8, flexWrap:'wrap', justifyContent:'center', marginBottom:18, maxWidth:640 }}>
+      <span style={{ fontSize:11, color:theme.textFaint, alignSelf:'center', marginRight:2 }}>Recent:</span>
+      {history.map((term, i) => (
+        <button
+          key={`${term}-${i}`}
+          onClick={() => onPick(term)}
+          style={{
+            padding:'5px 14px', borderRadius:50, fontSize:12, fontWeight:600, cursor:'pointer',
+            background: theme.surface, border:`1px solid ${theme.border}`, color: theme.textDim,
+            transition:'all 0.2s',
+          }}
+          onMouseEnter={e=>{e.currentTarget.style.borderColor=theme.borderStrong; e.currentTarget.style.color=theme.accent;}}
+          onMouseLeave={e=>{e.currentTarget.style.borderColor=theme.border; e.currentTarget.style.color=theme.textDim;}}
+        >{term}</button>
+      ))}
     </div>
   );
 }
@@ -558,10 +630,10 @@ function ImageGrid({ images, loading, error }) {
             style={{
               position:'absolute', top:8, left:8,
               width:26, height:26, borderRadius:'50%',
-              background: 'rgba(2,3,10,0.55)', backdropFilter:'blur(8px)',
-              border:'1px solid rgba(255,255,255,0.25)',
+              background: theme.overlay, backdropFilter:'blur(8px)',
+              border:`1px solid ${theme.overlayBorder}`,
               display:'flex', alignItems:'center', justifyContent:'center',
-              cursor:'pointer', color:'#fff', fontSize:12,
+              cursor:'pointer', color: theme.mode === 'dark' ? '#fff' : '#0a1430', fontSize:12,
               opacity: hovered===img.id ? 1 : 0,
               transform: hovered===img.id ? 'scale(1)' : 'scale(0.7)',
               transition:'all 0.2s ease',
@@ -573,31 +645,33 @@ function ImageGrid({ images, loading, error }) {
           <div style={{
             position:'absolute', bottom:0, left:0, right:0,
             padding:'24px 10px 8px',
-            background:'linear-gradient(to top,rgba(2,3,10,0.85),transparent)',
+            background: theme.mode === 'dark'
+              ? 'linear-gradient(to top,rgba(2,3,10,0.85),transparent)'
+              : 'linear-gradient(to top,rgba(255,255,255,0.92),transparent)',
             opacity: hovered===img.id ? 1 : 0,
             transform: hovered===img.id ? 'translateY(0)' : 'translateY(6px)',
             transition:'all 0.25s ease',
           }}>
-            <p style={{ color:'#fff',fontSize:11,fontWeight:700,marginBottom:4, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{img.title}</p>
+            <p style={{ color: theme.mode === 'dark' ? '#fff' : '#0a1430', fontSize:11,fontWeight:700,marginBottom:4, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{img.title}</p>
             <div style={{ display:'flex',gap:4,flexWrap:'wrap' }}>
               <span style={{
                 fontSize:9,padding:'2px 6px',borderRadius:50,
-                background:'rgba(30,144,255,0.25)',color:'#9fd0ff',fontWeight:600,letterSpacing:0.5,
+                background:`${theme.accent}33`,color:theme.accent,fontWeight:600,letterSpacing:0.5,
               }}>{img.creator}</span>
               {img.license && (
                 <span style={{
                   fontSize:9,padding:'2px 6px',borderRadius:50,
-                  background:'rgba(30,144,255,0.25)',color:'#9fd0ff',fontWeight:600,letterSpacing:0.5,
+                  background:`${theme.accent}33`,color:theme.accent,fontWeight:600,letterSpacing:0.5,
                 }}>{img.license}</span>
               )}
             </div>
           </div>
           <div style={{
             position:'absolute',top:8,right:8,
-            background:'rgba(30,144,255,0.18)',backdropFilter:'blur(8px)',
-            border:'1px solid rgba(30,144,255,0.35)',
+            background:`${theme.accent}2e`,backdropFilter:'blur(8px)',
+            border:`1px solid ${theme.accent}59`,
             borderRadius:50,padding:'2px 8px',
-            fontSize:9,color:'#cfe8ff',fontWeight:700,letterSpacing:0.5,
+            fontSize:9,color:theme.accent,fontWeight:700,letterSpacing:0.5,
           }}>AI</div>
         </a>
       ))}
@@ -612,6 +686,12 @@ function ImageGrid({ images, loading, error }) {
 }
 
 // ─── Hero ─────────────────────────────────────────────────────────────────────
+const SURPRISE_TERMS = [
+  'bioluminescent forest', 'tokyo rain at night', 'desert dunes at dawn',
+  'glacier ice cave', 'vintage motorcycle', 'macro dewdrop', 'aurora borealis',
+  'brutalist architecture', 'underwater coral reef', 'milky way over mountains',
+];
+
 function Hero() {
   const theme = useTheme();
   const [query, setQuery] = useState('');
@@ -624,6 +704,7 @@ function Hero() {
   const [elapsed, setElapsed] = useState(null);
   const [apiKey, setApiKey] = useState('');
   const [cx, setCx] = useState('');
+  const [history, setHistory] = useState([]);
   const debounceRef = useRef(null);
 
   const placeholders=['sunsets over mountains','neon city rain','abstract geometry','deep ocean life'];
@@ -639,6 +720,11 @@ function Hero() {
     return ()=>clearInterval(tick);
   },[]);
 
+  const pushHistory = (term) => {
+    if (!term) return;
+    setHistory(h => [term, ...h.filter(x => x.toLowerCase() !== term.toLowerCase())].slice(0, 5));
+  };
+
   const runSearch = useCallback(async (q, keyOverride, cxOverride) => {
     const term = q.trim() || 'sunsets over mountains';
     setLoading(true);
@@ -653,6 +739,7 @@ function Hero() {
       setImages(results);
       setResultLabel(q.trim() ? `RESULTS FOR "${q.trim().toUpperCase()}"` : 'TRENDING SEARCHES');
       setElapsed(((performance.now() - start) / 1000).toFixed(2));
+      if (q.trim()) pushHistory(q.trim());
     } catch (e) {
       setError(e.message || 'unknown error');
     } finally {
@@ -675,6 +762,19 @@ function Hero() {
     e.preventDefault();
     if (debounceRef.current) clearTimeout(debounceRef.current);
     runSearch(query);
+  };
+
+  const handleSurprise = () => {
+    const term = SURPRISE_TERMS[Math.floor(Math.random() * SURPRISE_TERMS.length)];
+    setQuery(term);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    runSearch(term);
+  };
+
+  const handleHistoryPick = (term) => {
+    setQuery(term);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    runSearch(term);
   };
 
   return (
@@ -716,6 +816,15 @@ function Hero() {
               placeholder={typed+'|'}
               style={{ flex:1,padding:'19px 16px',background:'transparent',border:'none',outline:'none',color:theme.text,fontSize:16 }}
             />
+            <button type="button" onClick={handleSurprise} title="Surprise me"
+              style={{
+                marginRight:6, padding:'9px 14px',borderRadius:50,fontSize:16,cursor:'pointer',
+                background:'transparent', border:`1px solid ${theme.border}`, color:theme.accent,
+                transition:'background 0.2s, transform 0.2s',
+              }}
+              onMouseEnter={e=>{e.currentTarget.style.background=`${theme.accent}1a`; e.currentTarget.style.transform='rotate(18deg)';}}
+              onMouseLeave={e=>{e.currentTarget.style.background='transparent'; e.currentTarget.style.transform='rotate(0deg)';}}
+            >🎲</button>
             <button type="submit" style={{
               marginRight:14, padding:'9px 20px',borderRadius:50,fontSize:13,fontWeight:700,cursor:'pointer',
               background:`linear-gradient(135deg,${theme.accent},${theme.accent2})`,border:'none',color:'#fff',
@@ -724,6 +833,8 @@ function Hero() {
           </div>
         </Card3D>
       </form>
+
+      <HistoryChips history={history} onPick={handleHistoryPick} />
 
       <ApiSettings
         apiKey={apiKey} cx={cx} setApiKey={setApiKey} setCx={setCx}
@@ -741,7 +852,7 @@ function Hero() {
           </span>
         </div>
         <ImageGrid images={images} loading={loading} error={error} />
-        <p style={{ color:theme.textFaint, fontSize:11, marginTop:14 }}>Hover an image and tap ⬇ to download it.</p>
+        <p style={{ color:theme.textFaint, fontSize:11, marginTop:14 }}>Hover an image and tap ⬇ to download it · tap 🎲 to surprise yourself.</p>
       </div>
 
       <div style={{ display:'flex',gap:16,flexWrap:'wrap',justifyContent:'center' }}>
@@ -1035,10 +1146,12 @@ function Footer() {
   return (
     <footer style={{ background:theme.surfaceStrong,backdropFilter:'blur(24px)',borderTop:`1px solid ${theme.border}`,padding:'64px 48px 32px' }}>
       <div style={{ maxWidth:1100,margin:'0 auto' }}>
-        <div style={{ marginBottom:60 }}>
-            <div style={{marginLeft:"20vh" ,color:"gray"}}>
-         <span style={{fontSize:"29vh"}}>Aether</span><span style={{fontSize:"24vh"}}>Pix</span>
-         </div>
+        <div style={{ marginBottom:60, textAlign:'center', color:theme.textFaint }}>
+          <span style={{ fontSize:'clamp(40px,8vw,90px)', fontWeight:900, letterSpacing:-2,
+            background:`linear-gradient(135deg,${theme.accent},${theme.text})`,
+            WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', opacity:0.85 }}>
+            Aether<span style={{ opacity:0.6 }}>Pix</span>
+          </span>
         </div>
 
         <div style={{ borderTop:`1px solid ${theme.border}`,paddingTop:24,textAlign:'center',color:theme.textFaint,fontSize:12 }}>
@@ -1067,6 +1180,7 @@ export default function AetherPix() {
         <div style={{ position:'fixed',bottom:'18%',right:'8%',width:550,height:550,borderRadius:'50%',background:`radial-gradient(circle,${theme.glow} 0%,transparent 70%)`,opacity:0.4,pointerEvents:'none',zIndex:0 }}/>
         <div style={{ position:'fixed',top:'55%',left:'50%',width:400,height:400,borderRadius:'50%',background:`radial-gradient(circle,${theme.glow} 0%,transparent 70%)`,opacity:0.3,transform:'translate(-50%,-50%)',pointerEvents:'none',zIndex:0 }}/>
 
+        <AuroraField />
         <ThreeCanvas />
         <Navbar />
 
@@ -1084,8 +1198,9 @@ export default function AetherPix() {
           * { box-sizing:border-box; margin:0; padding:0; }
           html { scroll-behavior:smooth; }
           ::-webkit-scrollbar { width:7px; }
-          ::-webkit-scrollbar-track { background:${theme.mode==='dark'?'rgba(2,3,10,0.8)':'rgba(240,244,255,0.8)'}; }
-          ::-webkit-scrollbar-thumb { background:linear-gradient(180deg,${theme.accent},${theme.accent2}); border-radius:4px; }
+          ::-webkit-scrollbar-track { background:${theme.scrollTrack}; }
+          ::-webkit-scrollbar-thumb { background:${theme.scrollThumb}; border-radius:4px; }
+          ::-webkit-scrollbar-thumb:hover { background:${theme.mode==='dark'?'rgba(170,185,215,0.5)':'rgba(60,80,130,0.5)'}; }
           @media (prefers-reduced-motion:reduce) { * { transition:none !important; animation:none !important; } }
         `}</style>
       </div>
