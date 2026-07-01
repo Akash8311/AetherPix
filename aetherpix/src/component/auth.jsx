@@ -18,16 +18,12 @@ const Auth = () => {
 
   const handleGoogleAuth = () => {
     setLoading(true)
-    // Replace this block with your real Google OAuth call
-    // (e.g. Firebase signInWithPopup, or a redirect to your backend's
-    // /auth/google endpoint). On success, navigate to the home page.
     console.log(`${mode} with Google`)
     setTimeout(() => {
       setLoading(false)
       navigate('/home')
     }, 900)
   }
-
   return (
     <div
       style={{

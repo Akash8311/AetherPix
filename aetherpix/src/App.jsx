@@ -1,12 +1,12 @@
 import React from 'react'
 import Home from './component/Home'
-import auth from './component/auth'
+import Auth from './component/auth'
 
 const App = () => {
   return (
     <div>
-      <Home/>
-      <auth/>
+      <Home />
+      <Auth />
     </div>
   )
 }
