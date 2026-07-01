@@ -1,14 +1,17 @@
-import React from 'react'
-import Home from './component/Home'
-import Auth from './component/auth'
+import React from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Home from "./component/Home";
+import Auth from "./component/auth";
 
 const App = () => {
   return (
-    <div>
-      <Home />
-      <Auth />
-    </div>
-  )
-}
 
-export default App
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/auth" element={<Auth />} />
+      </Routes>
+
+  );
+};
+
+export default App;
